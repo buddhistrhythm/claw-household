@@ -1,0 +1,36 @@
+{
+  "dairy": { "label": "乳制饮品", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 14, "location": "冰箱冷藏", "unit_spec_template": { "sku_unit": "盒", "spu_unit": "箱" } },
+  "meat_fresh": { "label": "鲜肉禽蛋", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 3, "location": "冰箱冷藏" },
+  "meat_frozen": { "label": "冻肉水产", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 90, "location": "冰箱冷冻" },
+  "vegetable": { "label": "新鲜蔬菜", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 5, "location": "冰箱冷藏" },
+  "fruit": { "label": "新鲜水果", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 7, "location": "常温/冰箱" },
+  "fast_food": { "label": "烘焙速食", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 30, "location": "常温/冰箱" },
+  "grain": { "label": "米面粮油", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 180, "location": "储物柜" },
+  "condiment": { "label": "调味干货", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 365, "location": "储物柜" },
+  "snack": { "label": "休闲零食", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 90, "location": "储物柜", "unit_spec_template": { "sku_unit": "包", "spu_unit": "箱" } },
+  "beverage": { "label": "酒水饮料", "parent": "food", "parent_label": "🍎 食品饮料", "default_shelf_days": 180, "location": "储物柜", "unit_spec_template": { "sku_unit": "瓶", "spu_unit": "箱" } },
+
+  "formula": { "label": "婴儿奶粉", "parent": "baby", "parent_label": "🍼 母婴用品", "default_shelf_days": 21, "location": "宝宝用品柜", "note": "开封后保质期", "unit_spec_template": { "sku_unit": "克", "spu_unit": "罐" } },
+  "rtf": { "label": "水奶 (RTF)", "parent": "baby", "parent_label": "🍼 母婴用品", "default_shelf_days": 21, "location": "宝宝用品柜", "note": "库存按瓶，规格见下方专属模块", "unit_spec_template": { "sku_unit": "瓶", "spu_unit": "箱" } },
+  "diaper": { "label": "纸尿裤", "parent": "baby", "parent_label": "🍼 母婴用品", "default_shelf_days": 730, "location": "宝宝用品柜", "unit_spec_template": { "sku_unit": "片", "spu_unit": "箱" } },
+  "baby_food": { "label": "自制/成品辅食", "parent": "baby", "parent_label": "🍼 母婴用品", "default_shelf_days": 7, "location": "冰箱冷藏" },
+  "baby_snack": { "label": "宝宝零食", "parent": "baby", "parent_label": "🍼 母婴用品", "default_shelf_days": 30, "location": "宝宝用品柜", "unit_spec_template": { "sku_unit": "包", "spu_unit": "箱" } },
+  "wipes": { "label": "湿巾/棉柔巾", "parent": "baby", "parent_label": "🍼 母婴用品", "default_shelf_days": 1095, "location": "宝宝用品柜", "unit_spec_template": { "sku_unit": "抽", "spu_unit": "箱" } },
+  "baby_clothing": { "label": "童装鞋帽", "parent": "baby", "parent_label": "🍼 母婴用品", "default_shelf_days": 1095, "location": "宝宝衣柜" },
+  "baby_toys": { "label": "玩具早教", "parent": "baby", "parent_label": "🍼 母婴用品", "default_shelf_days": 3650, "location": "游戏区" },
+
+  "cleaning": { "label": "家清用品", "parent": "household", "parent_label": "🧼 日用百货", "default_shelf_days": 730, "location": "家政柜", "unit_spec_template": { "sku_unit": "瓶", "spu_unit": "箱" } },
+  "paper_goods": { "label": "纸巾卫生", "parent": "household", "parent_label": "🧼 日用百货", "default_shelf_days": 1095, "location": "储物柜", "unit_spec_template": { "sku_unit": "包", "spu_unit": "箱", "spu_qty": 24 } },
+  "personal_care": { "label": "个人护理", "parent": "household", "parent_label": "🧼 日用百货", "default_shelf_days": 365, "location": "卫生间储物架" },
+  "home_misc": { "label": "收纳杂物", "parent": "household", "parent_label": "🧼 日用百货", "default_shelf_days": 730, "location": "杂物箱", "note": "工具、收纳等" },
+  
+  "medicine": { "label": "药品保健", "parent": "health", "parent_label": "💊 医药健康", "default_shelf_days": 365, "location": "药品柜" },
+
+  "appliances": { "label": "厨房电器", "parent": "appliances", "parent_label": "🔌 家用电器", "default_shelf_days": 3650, "location": "厨房" },
+  
+  "clothing": { "label": "成人服饰", "parent": "apparel", "parent_label": "👕 服饰鞋包", "default_shelf_days": 1095, "location": "衣柜", "note": "按位置收纳，可写清格层/抽屉" },
+
+  "digital_voucher": { "label": "礼品卡券", "parent": "virtual", "parent_label": "🎫 虚拟财产", "default_shelf_days": 3650, "location": "电子保管", "note": "卡号、PIN、兑换码等写入下方加密区" },
+
+  "other": { "label": "其他", "parent": "other", "parent_label": "📦 其他", "default_shelf_days": 365, "location": "储物柜" }
+}

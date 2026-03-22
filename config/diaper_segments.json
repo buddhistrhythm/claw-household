@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "segments": [
+    { "code": "NB", "label": "NB 新生儿", "weight_min_kg": 0, "weight_max_kg": 5 },
+    { "code": "S", "label": "S 小号", "weight_min_kg": 4, "weight_max_kg": 8 },
+    { "code": "M", "label": "M 中号", "weight_min_kg": 6, "weight_max_kg": 11 },
+    { "code": "L", "label": "L 大号", "weight_min_kg": 9, "weight_max_kg": 14 },
+    { "code": "XL", "label": "XL 加大", "weight_min_kg": 12, "weight_max_kg": 17 },
+    { "code": "XXL", "label": "XXL 加加大", "weight_min_kg": 15, "weight_max_kg": 25 }
+  ],
+  "notes": "体重区间可按品牌包装自行调整；入库时可选手选段位或自定义 kg 范围。"
+}

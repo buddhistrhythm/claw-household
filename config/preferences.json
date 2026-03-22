@@ -1,0 +1,64 @@
+{
+  "family": {
+    "members": [
+      "爸爸",
+      "妈妈",
+      "宝宝"
+    ],
+    "baby_name": "宝宝",
+    "dietary_restrictions": [],
+    "allergens_to_watch": []
+  },
+  "ui": {
+    "show_transit_tab": true,
+    "inventory_subtitle_mode": "default",
+    "inventory_subtitle_template": "共 {count} 条 · 食品/衣物/杂物/位置",
+    "inventory_subtitle_urgent_template": "⚠️ {urgent} 件即将过期"
+  },
+  "llm": {
+    "backend": "http",
+    "completion_url": "",
+    "api_key": "",
+    "model": "gpt-4o-mini",
+    "auth_style": "bearer",
+    "user_prompt_template": "",
+    "body_template": "",
+    "subscription": null,
+    "cli_command": "",
+    "cli_args": [],
+    "cli_timeout_ms": 120000,
+    "cli_cwd": ""
+  },
+  "shopping": {
+    "preferred_stores": [
+      "盒马",
+      "叮咚买菜",
+      "超市"
+    ],
+    "delivery_days": 1,
+    "restock_buffer_days": 3
+  },
+  "baby": {
+    "formula_ml_per_gram": 7,
+    "diaper_qty_per_change": 1,
+    "track_item_ids": {
+      "diaper": null,
+      "formula": null,
+      "ready_to_feed": null
+    }
+  },
+  "notifications": {
+    "daily_summary_time": "09:00",
+    "weekly_report_day": "sunday",
+    "weekly_report_time": "10:00"
+  },
+  "alerts": {
+    "urgent_days": 3,
+    "warning_days": 7
+  },
+  "cooking": {
+    "workday_max_minutes": 30,
+    "weekend_max_minutes": 90,
+    "thermomix_available": true
+  }
+}

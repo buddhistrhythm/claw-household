@@ -1,0 +1,19 @@
+{
+  "name": "household-agent",
+  "version": "1.0.0",
+  "description": "Household Agent — 家庭智能管理（库存、餐食、宝宝、日历等）",
+  "main": "skills/server.js",
+  "scripts": {
+    "start": "node skills/server.js",
+    "dev": "node --watch skills/server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^1.4.5-lts.1"
+  }
+}

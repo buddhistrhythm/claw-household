@@ -1,0 +1,4 @@
+{
+  // 「在外部终端中打开」等操作使用 Ghostty（继承工作区 cwd；应用路径因安装方式可能不同）
+  "terminal.external.osxExec": "/Applications/Ghostty.app/Contents/MacOS/ghostty"
+}
