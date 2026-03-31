@@ -15,6 +15,18 @@ const {
   decryptSecret,
   stripVaultForClient,
 } = require("./crypto-vault");
+const {
+  CLI_PRESETS,
+  llmOk: llmCookingOk,
+  complete: llmComplete,
+  completeCli: runLlmCliCompletion,
+  completeHttp: runLlmHttpCompletion,
+  completeCliStreaming: runLlmCliCompletionStreaming,
+  setupSseResponse,
+  stripAnsi,
+  extractCompletionText,
+  escapeForJsonStringContent,
+} = require("./lib/llm-completion");
 
 // ─── Shared data layer ──────────────────────────────────────────────────────
 const { PATHS, readJSON, writeJSON, today, formatLocalDate, daysUntil, generateId } = require("./lib/data");
@@ -780,18 +792,6 @@ function isCookingInventoryCategory(cat) {
   return cat && !NON_COOKING_INGREDIENT_CATEGORIES.has(cat);
 }
 
-function llmCookingOk(llm) {
-  if (!llm || typeof llm !== "object") return false;
-  const backend = String(llm.backend || "http").toLowerCase();
-  if (backend === "cli") return !!String(llm.cli_command || "").trim();
-  const url = String(llm.completion_url || "").trim();
-  if (!url) return false;
-  const authStyle = llm.auth_style || "bearer";
-  const key = String(llm.api_key || "").trim();
-  if (authStyle !== "none" && !key) return false;
-  return true;
-}
-
 function mergePreferencesDisplay() {
   const prefs = readJSON(PREFERENCES_PATH);
   const family = prefs.family || {};
@@ -857,23 +857,6 @@ function inventorySubtitleStats(prefs) {
   return { count: items.length, urgent, urgent_threshold_days: urg };
 }
 
-function escapeForJsonStringContent(s) {
-  return JSON.stringify(String(s)).slice(1, -1);
-}
-
-function extractCompletionText(json) {
-  if (json == null) return "";
-  if (typeof json === "string") return json.trim();
-  const c0 = json.choices && json.choices[0];
-  if (c0?.message?.content != null) return String(c0.message.content).trim();
-  if (c0?.text != null) return String(c0.text).trim();
-  const cand = json.candidates && json.candidates[0];
-  if (cand?.content?.parts?.[0]?.text != null) return String(cand.content.parts[0].text).trim();
-  if (json.content != null) return String(json.content).trim();
-  if (json.output_text != null) return String(json.output_text).trim();
-  return "";
-}
-
 function buildLlmInventoryPrompt(llm, stats) {
   const custom = llm.user_prompt_template != null ? String(llm.user_prompt_template).trim() : "";
   if (custom) {
@@ -888,303 +871,18 @@ function buildLlmInventoryPrompt(llm, stats) {
   );
 }
 
-function applyLlmAuthHeaders(headers, llm, key) {
-  const style = llm.auth_style || "bearer";
-  if (style === "none") return;
-  if (style === "x_api_key") {
-    headers["x-api-key"] = key;
-    return;
-  }
-  headers.Authorization = `Bearer ${key}`;
-}
-
-function expandCliArgPlaceholders(s, llm, prompt, stats) {
-  const model = String(llm.model || "").trim();
-  return String(s)
-    .replace(/<<<PROMPT>>>/g, prompt)
-    .replace(/<<<MODEL>>>/g, model)
-    .replace(/<<<COUNT>>>/g, String(stats.count))
-    .replace(/<<<URGENT>>>/g, String(stats.urgent))
-    .replace(/<<<URGENT_DAYS>>>/g, String(stats.urgent_threshold_days));
-}
-
-function stripAnsi(s) {
-  return String(s).replace(/\x1b\[[0-9;]*m/g, "");
-}
-
-function normalizeCliArgs(llm, prompt, stats) {
-  const raw = llm.cli_args;
-  let arr;
-  if (Array.isArray(raw)) {
-    arr = raw;
-  } else if (typeof raw === "string" && raw.trim()) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return { ok: false, error: "cli_args 须为 JSON 数组" };
-      arr = parsed;
-    } catch (e) {
-      return { ok: false, error: `cli_args JSON 无效：${e.message || e}` };
-    }
-  } else {
-    return { ok: false, error: "请配置 cli_args（JSON 数组），例如 [\"-p\",\"<<<PROMPT>>>\"]" };
-  }
-  const args = arr.map((a) => expandCliArgPlaceholders(a, llm, prompt, stats));
-  return { ok: true, args };
-}
-
-function runSpawned(command, args, opts) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (fn, arg) => {
-      if (settled) return;
-      settled = true;
-      fn(arg);
-    };
-    const proc = spawn(command, args, {
-      shell: false,
-      env: { ...process.env },
-      cwd: opts.cwd || undefined,
-    });
-    let out = "";
-    let err = "";
-    const timeoutMs = opts.timeoutMs || 120000;
-    const t = setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch (_) {}
-      finish(reject, new Error(`CLI 超时（${timeoutMs}ms）`));
-    }, timeoutMs);
-    proc.stdout.on("data", (d) => {
-      out += d.toString();
-      if (out.length > 2_000_000) {
-        try {
-          proc.kill("SIGKILL");
-        } catch (_) {}
-      }
-    });
-    proc.stderr.on("data", (d) => {
-      err += d.toString();
-    });
-    proc.on("error", (e) => {
-      clearTimeout(t);
-      finish(reject, e);
-    });
-    proc.on("close", (code) => {
-      clearTimeout(t);
-      if (settled) return;
-      if (code !== 0 && !out.trim()) {
-        finish(reject, new Error((err || `退出码 ${code}`).slice(0, 1200)));
-        return;
-      }
-      finish(resolve, { stdout: out, stderr: err, code: code || 0 });
-    });
-  });
-}
-
-async function runLlmCliCompletion(llm, prompt, stats) {
-  const cmd = String(llm.cli_command || "").trim();
-  if (!cmd) return { ok: false, error: "请配置本地 CLI 命令（cli_command）" };
-  const norm = normalizeCliArgs(llm, prompt, stats);
-  if (!norm.ok) return norm;
-  const timeoutRaw = llm.cli_timeout_ms;
-  const timeoutMs = Math.min(
-    Math.max(parseInt(timeoutRaw, 10) || 120000, 5000),
-    600000
-  );
-  const cwdRaw = llm.cli_cwd != null ? String(llm.cli_cwd).trim() : "";
-  let cwd;
-  if (cwdRaw) {
-    if (!fs.existsSync(cwdRaw)) return { ok: false, error: `cli_cwd 不存在：${cwdRaw}` };
-    cwd = cwdRaw;
-  }
-  try {
-    const { stdout, stderr, code } = await runSpawned(cmd, norm.args, { timeoutMs, cwd });
-    let text = stripAnsi(stdout).trim();
-    if (!text && stderr.trim()) text = stripAnsi(stderr).trim();
-    if (!text) return { ok: false, error: code !== 0 ? (stderr || `CLI 退出码 ${code}`).slice(0, 800) : "CLI 无输出" };
-    return { ok: true, text };
-  } catch (e) {
-    return { ok: false, error: e.message || String(e) };
-  }
-}
-
-/* ─── SSE streaming helpers ───────────────────────────────────────────────── */
-
-function setupSseResponse(res) {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  const send = (obj) => {
-    if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`);
-  };
-  const sendError = (msg) => {
-    send({ error: msg });
-    if (!res.writableEnded) res.end();
-  };
-  return { send, sendError };
-}
-
-/**
- * Stream CLI stdout chunks via SSE, return full accumulated text.
- * @param {object} send - SSE send helper from setupSseResponse
- * @param {object} llm - llm config from preferences
- * @param {string} prompt
- * @param {object} stats
- * @param {AbortSignal|null} abortSignal - abort when client disconnects
- * @returns {Promise<{ok:boolean, text?:string, error?:string}>}
- */
-function runLlmCliCompletionStreaming(send, llm, prompt, stats, abortSignal) {
-  const cmd = String(llm.cli_command || "").trim();
-  if (!cmd) {
-    return Promise.resolve({ ok: false, error: "请配置本地 CLI 命令（cli_command）" });
-  }
-  const norm = normalizeCliArgs(llm, prompt, stats);
-  if (!norm.ok) return Promise.resolve(norm);
-  const timeoutRaw = llm.cli_timeout_ms;
-  const timeoutMs = Math.min(Math.max(parseInt(timeoutRaw, 10) || 120000, 5000), 600000);
-  const cwdRaw = llm.cli_cwd != null ? String(llm.cli_cwd).trim() : "";
-  let cwd;
-  if (cwdRaw) {
-    if (!fs.existsSync(cwdRaw)) return Promise.resolve({ ok: false, error: `cli_cwd 不存在：${cwdRaw}` });
-    cwd = cwdRaw;
-  }
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-
-    const proc = spawn(cmd, norm.args, {
-      shell: false,
-      env: { ...process.env },
-      cwd: cwd || undefined,
-    });
-
-    let out = "";
-    let err = "";
-
-    const timer = setTimeout(() => {
-      try { proc.kill("SIGKILL"); } catch (_) {}
-      send({ error: `CLI 超时（${timeoutMs}ms）` });
-      finish({ ok: false, error: `CLI 超时（${timeoutMs}ms）` });
-    }, timeoutMs);
-
-    // Client disconnect → kill child
-    if (abortSignal) {
-      abortSignal.addEventListener("abort", () => {
-        clearTimeout(timer);
-        try { proc.kill("SIGKILL"); } catch (_) {}
-        finish({ ok: false, error: "客户端断开" });
-      }, { once: true });
-    }
-
-    proc.stdout.on("data", (d) => {
-      const chunk = stripAnsi(d.toString());
-      out += chunk;
-      if (out.length > 2_000_000) {
-        try { proc.kill("SIGKILL"); } catch (_) {}
-        return;
-      }
-      send({ chunk });
-    });
-    proc.stderr.on("data", (d) => {
-      err += d.toString();
-    });
-    proc.on("error", (e) => {
-      clearTimeout(timer);
-      finish({ ok: false, error: e.message || String(e) });
-    });
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      let text = out.trim();
-      if (!text && err.trim()) text = stripAnsi(err).trim();
-      if (!text) {
-        finish({ ok: false, error: code !== 0 ? (err || `退出码 ${code}`).slice(0, 800) : "CLI 无输出" });
-        return;
-      }
-      finish({ ok: true, text });
-    });
-  });
-}
-
-async function postInventorySubtitleCli(llm, prompt, stats) {
-  const r = await runLlmCliCompletion(llm, prompt, stats);
-  if (!r.ok) return r;
-  const line = r.text.split(/\r?\n/).find((l) => l.trim()) || r.text;
-  const subtitle = line.trim().slice(0, 500);
-  if (!subtitle) return { ok: false, error: "CLI 输出为空" };
-  return { ok: true, subtitle, stats };
-}
-
-async function runLlmHttpCompletion(llm, prompt, maxTokens) {
-  const url = String(llm.completion_url || "").trim();
-  const key = String(llm.api_key || "").trim();
-  const authStyle = llm.auth_style || "bearer";
-  if (!url) return { ok: false, error: "请先配置 completion URL，或改用「本地 CLI」" };
-  if (authStyle !== "none" && !key) return { ok: false, error: "请先配置 API Key，或将鉴权改为「无」" };
-
-  const model = String(llm.model || "gpt-4o-mini").trim() || "gpt-4o-mini";
-  const mt = Math.min(Math.max(parseInt(maxTokens, 10) || 2000, 50), 8000);
-
-  let bodyObj;
-  const tpl = llm.body_template != null ? String(llm.body_template).trim() : "";
-  if (tpl) {
-    try {
-      const raw = tpl
-        .replace(/<<<MODEL>>>/g, model)
-        .replace(/<<<PROMPT>>>/g, escapeForJsonStringContent(prompt));
-      bodyObj = JSON.parse(raw);
-    } catch (e) {
-      return { ok: false, error: `body_template 解析失败：${e.message || e}` };
-    }
-  } else {
-    bodyObj = {
-      model,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: mt,
-    };
-  }
-
-  const headers = { "Content-Type": "application/json" };
-  applyLlmAuthHeaders(headers, llm, key);
-
-  const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(bodyObj) });
-  const text = await r.text();
-  if (!r.ok) {
-    return { ok: false, error: text.slice(0, 800) || `HTTP ${r.status}` };
-  }
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return { ok: false, error: "响应不是 JSON" };
-  }
-  const out = extractCompletionText(json);
-  if (!out) return { ok: false, error: "模型未返回可用文本" };
-  return { ok: true, text: out };
-}
-
 async function postInventorySubtitleLlm(prefs) {
   const mode = prefs.ui?.inventory_subtitle_mode;
   if (mode !== "llm") return { ok: false, error: "未启用大模型副标题" };
   const llm = prefs.llm || {};
-  const backend = String(llm.backend || "http").toLowerCase();
   const stats = inventorySubtitleStats(prefs);
   const prompt = buildLlmInventoryPrompt(llm, stats);
-
-  if (backend === "cli") {
-    return postInventorySubtitleCli(llm, prompt, stats);
-  }
-
-  const httpOut = await runLlmHttpCompletion(llm, prompt, 120);
-  if (!httpOut.ok) return httpOut;
-  return { ok: true, subtitle: httpOut.text, stats };
+  const r = await llmComplete(llm, prompt, { maxTokens: 120, stats });
+  if (!r.ok) return r;
+  const line = r.text.split(/\r?\n/).find((l) => l.trim()) || r.text;
+  const subtitle = line.trim().slice(0, 500);
+  if (!subtitle) return { ok: false, error: "输出为空" };
+  return { ok: true, subtitle, stats };
 }
 
 function stripJsonFences(s) {
@@ -1345,18 +1043,9 @@ function prepareCookingRecommendationsLlm(prefs, body) {
 async function postCookingRecommendationsLlm(prefs, body) {
   const prep = prepareCookingRecommendationsLlm(prefs, body);
   if (!prep.ok) return prep;
-  const { llm, prompt, backend, stats } = prep;
-  let textOut;
-  if (backend === "cli") {
-    const r = await runLlmCliCompletion(llm, prompt, stats);
-    if (!r.ok) return r;
-    textOut = r.text;
-  } else {
-    const r = await runLlmHttpCompletion(llm, prompt, 3500);
-    if (!r.ok) return r;
-    textOut = r.text;
-  }
-  return parseCookingRecommendationsArray(textOut);
+  const r = await llmComplete(prep.llm, prep.prompt, { maxTokens: 3500, stats: prep.stats });
+  if (!r.ok) return r;
+  return parseCookingRecommendationsArray(r.text);
 }
 
 function prepareCookingExpandStepsLlm(prefs, body) {
@@ -1377,24 +1066,19 @@ function prepareCookingExpandStepsLlm(prefs, body) {
 async function postCookingExpandStepsLlm(prefs, body) {
   const prep = prepareCookingExpandStepsLlm(prefs, body);
   if (!prep.ok) return prep;
-  const { llm, prompt, backend, stats } = prep;
-  let textOut;
-  if (backend === "cli") {
-    const r = await runLlmCliCompletion(llm, prompt, stats);
-    if (!r.ok) return r;
-    textOut = r.text;
-  } else {
-    const r = await runLlmHttpCompletion(llm, prompt, 2500);
-    if (!r.ok) return r;
-    textOut = r.text;
-  }
-  const steps = String(textOut || "").trim().slice(0, 12000);
+  const r = await llmComplete(prep.llm, prep.prompt, { maxTokens: 2500, stats: prep.stats });
+  if (!r.ok) return r;
+  const steps = String(r.text || "").trim().slice(0, 12000);
   if (!steps) return { ok: false, error: "模型未返回步骤" };
   return { ok: true, steps };
 }
 
 app.get("/api/preferences", (req, res) => {
   res.json(mergePreferencesDisplay());
+});
+
+app.get("/api/llm/presets", (_req, res) => {
+  res.json(CLI_PRESETS);
 });
 
 /** 储物 Tab 副标题：服务端代调用 completion（API Key 仅存服务端 preferences.json） */

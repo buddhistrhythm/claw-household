@@ -1383,6 +1383,7 @@
           <select id="settings-llm-cli-preset" class="form-input" style="margin-bottom:10px;max-width:100%" onchange="applyLlmCliPreset(this.value)">
             <option value="">（不套用）</option>
             <option value="claude">Claude Code（claude -p）</option>
+            <option value="openclaw">OpenClaw（openclaw run）</option>
             <option value="gemini">Gemini CLI（gemini -p）</option>
             <option value="codex">Codex CLI（codex -p）</option>
           </select>
@@ -1731,6 +1732,7 @@ function applyLlmCliPreset(preset) {
   if (!cmdEl || !argsEl) return;
   const map = {
     claude: { command: 'claude', args: '["-p","<<<PROMPT>>>"]' },
+    openclaw: { command: 'openclaw', args: '["run","--prompt","<<<PROMPT>>>"]' },
     gemini: { command: 'gemini', args: '["-p","<<<PROMPT>>>"]' },
     codex: { command: 'codex', args: '["-p","<<<PROMPT>>>"]' },
   };

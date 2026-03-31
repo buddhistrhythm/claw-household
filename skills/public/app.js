@@ -125,6 +125,7 @@ function applyLlmCliPreset(preset) {
   if (!cmdEl || !argsEl) return;
   const map = {
     claude: { command: 'claude', args: '["-p","<<<PROMPT>>>"]' },
+    openclaw: { command: 'openclaw', args: '["run","--prompt","<<<PROMPT>>>"]' },
     gemini: { command: 'gemini', args: '["-p","<<<PROMPT>>>"]' },
     codex: { command: 'codex', args: '["-p","<<<PROMPT>>>"]' },
   };
