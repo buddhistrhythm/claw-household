@@ -1008,6 +1008,111 @@ async function runLlmCliCompletion(llm, prompt, stats) {
   }
 }
 
+/* ─── SSE streaming helpers ───────────────────────────────────────────────── */
+
+function setupSseResponse(res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  const send = (obj) => {
+    if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  };
+  const sendError = (msg) => {
+    send({ error: msg });
+    if (!res.writableEnded) res.end();
+  };
+  return { send, sendError };
+}
+
+/**
+ * Stream CLI stdout chunks via SSE, return full accumulated text.
+ * @param {object} send - SSE send helper from setupSseResponse
+ * @param {object} llm - llm config from preferences
+ * @param {string} prompt
+ * @param {object} stats
+ * @param {AbortSignal|null} abortSignal - abort when client disconnects
+ * @returns {Promise<{ok:boolean, text?:string, error?:string}>}
+ */
+function runLlmCliCompletionStreaming(send, llm, prompt, stats, abortSignal) {
+  const cmd = String(llm.cli_command || "").trim();
+  if (!cmd) {
+    return Promise.resolve({ ok: false, error: "请配置本地 CLI 命令（cli_command）" });
+  }
+  const norm = normalizeCliArgs(llm, prompt, stats);
+  if (!norm.ok) return Promise.resolve(norm);
+  const timeoutRaw = llm.cli_timeout_ms;
+  const timeoutMs = Math.min(Math.max(parseInt(timeoutRaw, 10) || 120000, 5000), 600000);
+  const cwdRaw = llm.cli_cwd != null ? String(llm.cli_cwd).trim() : "";
+  let cwd;
+  if (cwdRaw) {
+    if (!fs.existsSync(cwdRaw)) return Promise.resolve({ ok: false, error: `cli_cwd 不存在：${cwdRaw}` });
+    cwd = cwdRaw;
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const proc = spawn(cmd, norm.args, {
+      shell: false,
+      env: { ...process.env },
+      cwd: cwd || undefined,
+    });
+
+    let out = "";
+    let err = "";
+
+    const timer = setTimeout(() => {
+      try { proc.kill("SIGKILL"); } catch (_) {}
+      send({ error: `CLI 超时（${timeoutMs}ms）` });
+      finish({ ok: false, error: `CLI 超时（${timeoutMs}ms）` });
+    }, timeoutMs);
+
+    // Client disconnect → kill child
+    if (abortSignal) {
+      abortSignal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        try { proc.kill("SIGKILL"); } catch (_) {}
+        finish({ ok: false, error: "客户端断开" });
+      }, { once: true });
+    }
+
+    proc.stdout.on("data", (d) => {
+      const chunk = stripAnsi(d.toString());
+      out += chunk;
+      if (out.length > 2_000_000) {
+        try { proc.kill("SIGKILL"); } catch (_) {}
+        return;
+      }
+      send({ chunk });
+    });
+    proc.stderr.on("data", (d) => {
+      err += d.toString();
+    });
+    proc.on("error", (e) => {
+      clearTimeout(timer);
+      finish({ ok: false, error: e.message || String(e) });
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      let text = out.trim();
+      if (!text && err.trim()) text = stripAnsi(err).trim();
+      if (!text) {
+        finish({ ok: false, error: code !== 0 ? (err || `退出码 ${code}`).slice(0, 800) : "CLI 无输出" });
+        return;
+      }
+      finish({ ok: true, text });
+    });
+  });
+}
+
 async function postInventorySubtitleCli(llm, prompt, stats) {
   const r = await runLlmCliCompletion(llm, prompt, stats);
   if (!r.ok) return r;
@@ -1224,7 +1329,7 @@ function buildExpandStepsPrompt(prefs, name, ingredients, stepsBrief) {
     .join("\n\n");
 }
 
-async function postCookingRecommendationsLlm(prefs, body) {
+function prepareCookingRecommendationsLlm(prefs, body) {
   const llm = prefs.llm || {};
   if (!llmCookingOk(llm)) {
     return { ok: false, error: "请先在配置中填写 llm（completion URL + API Key，或本地 CLI）" };
@@ -1234,6 +1339,13 @@ async function postCookingRecommendationsLlm(prefs, body) {
   const prompt = buildCookingRecommendPrompt(prefs, count, hint);
   const backend = String(llm.backend || "http").toLowerCase();
   const stats = inventorySubtitleStats(prefs);
+  return { ok: true, llm, prompt, backend, stats };
+}
+
+async function postCookingRecommendationsLlm(prefs, body) {
+  const prep = prepareCookingRecommendationsLlm(prefs, body);
+  if (!prep.ok) return prep;
+  const { llm, prompt, backend, stats } = prep;
   let textOut;
   if (backend === "cli") {
     const r = await runLlmCliCompletion(llm, prompt, stats);
@@ -1247,7 +1359,7 @@ async function postCookingRecommendationsLlm(prefs, body) {
   return parseCookingRecommendationsArray(textOut);
 }
 
-async function postCookingExpandStepsLlm(prefs, body) {
+function prepareCookingExpandStepsLlm(prefs, body) {
   const llm = prefs.llm || {};
   if (!llmCookingOk(llm)) {
     return { ok: false, error: "请先在配置中填写 llm（completion URL + API Key，或本地 CLI）" };
@@ -1259,6 +1371,13 @@ async function postCookingExpandStepsLlm(prefs, body) {
   const prompt = buildExpandStepsPrompt(prefs, name, ingredients, stepsBrief);
   const backend = String(llm.backend || "http").toLowerCase();
   const stats = inventorySubtitleStats(prefs);
+  return { ok: true, llm, prompt, backend, stats };
+}
+
+async function postCookingExpandStepsLlm(prefs, body) {
+  const prep = prepareCookingExpandStepsLlm(prefs, body);
+  if (!prep.ok) return prep;
+  const { llm, prompt, backend, stats } = prep;
   let textOut;
   if (backend === "cli") {
     const r = await runLlmCliCompletion(llm, prompt, stats);
@@ -1281,12 +1400,39 @@ app.get("/api/preferences", (req, res) => {
 /** 储物 Tab 副标题：服务端代调用 completion（API Key 仅存服务端 preferences.json） */
 app.post("/api/inventory-subtitle/llm", async (req, res) => {
   const prefs = readJSON(PREFERENCES_PATH);
-  try {
-    const out = await postInventorySubtitleLlm(prefs);
-    if (!out.ok) return res.status(400).json({ error: out.error });
-    res.json({ subtitle: out.subtitle, stats: out.stats });
-  } catch (e) {
-    res.status(500).json({ error: e.message || String(e) });
+  const wantStream = String(req.headers.accept || "").includes("text/event-stream");
+  const llmConf = prefs.llm && typeof prefs.llm === "object" ? prefs.llm : {};
+  const backend = String(llmConf.backend || "http").toLowerCase();
+  if (wantStream && backend === "cli") {
+    const mode = (prefs.ui || {}).inventory_subtitle_mode;
+    if (mode !== "llm") {
+      const { sendError } = setupSseResponse(res);
+      return sendError("未启用大模型副标题");
+    }
+    const { send, sendError } = setupSseResponse(res);
+    const ac = new AbortController();
+    req.on("close", () => ac.abort());
+    const stats = inventorySubtitleStats(prefs);
+    const prompt = buildLlmInventoryPrompt(llmConf, stats);
+    try {
+      const r = await runLlmCliCompletionStreaming(send, llmConf, prompt, stats, ac.signal);
+      if (!r.ok) { sendError(r.error); return; }
+      const line = r.text.split(/\r?\n/).find((l) => l.trim()) || r.text;
+      const subtitle = line.trim().slice(0, 500);
+      if (!subtitle) { send({ error: "CLI 输出为空" }); } else { send({ result: { subtitle, stats } }); }
+    } catch (e) {
+      sendError(e.message || String(e));
+      return;
+    }
+    if (!res.writableEnded) res.end();
+  } else {
+    try {
+      const out = await postInventorySubtitleLlm(prefs);
+      if (!out.ok) return res.status(400).json({ error: out.error });
+      res.json({ subtitle: out.subtitle, stats: out.stats });
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) });
+    }
   }
 });
 
@@ -1715,23 +1861,67 @@ app.delete("/api/cooking/pending-ingredient", (req, res) => {
 
 app.post("/api/cooking/llm-recommendations", async (req, res) => {
   const prefs = readJSON(PREFERENCES_PATH);
-  try {
-    const out = await postCookingRecommendationsLlm(prefs, req.body || {});
-    if (!out.ok) return res.status(400).json({ error: out.error });
-    res.json({ dishes: out.dishes });
-  } catch (e) {
-    res.status(500).json({ error: e.message || String(e) });
+  const wantStream = String(req.headers.accept || "").includes("text/event-stream");
+  const prep = prepareCookingRecommendationsLlm(prefs, req.body || {});
+  if (!prep.ok) {
+    if (wantStream) { const { sendError } = setupSseResponse(res); return sendError(prep.error); }
+    return res.status(400).json({ error: prep.error });
+  }
+  if (wantStream && prep.backend === "cli") {
+    const { send, sendError } = setupSseResponse(res);
+    const ac = new AbortController();
+    req.on("close", () => ac.abort());
+    try {
+      const r = await runLlmCliCompletionStreaming(send, prep.llm, prep.prompt, prep.stats, ac.signal);
+      if (!r.ok) { sendError(r.error); return; }
+      const parsed = parseCookingRecommendationsArray(r.text);
+      if (!parsed.ok) { send({ error: parsed.error }); } else { send({ result: { dishes: parsed.dishes } }); }
+    } catch (e) {
+      sendError(e.message || String(e));
+      return;
+    }
+    if (!res.writableEnded) res.end();
+  } else {
+    try {
+      const out = await postCookingRecommendationsLlm(prefs, req.body || {});
+      if (!out.ok) return res.status(400).json({ error: out.error });
+      res.json({ dishes: out.dishes });
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) });
+    }
   }
 });
 
 app.post("/api/cooking/llm-expand-steps", async (req, res) => {
   const prefs = readJSON(PREFERENCES_PATH);
-  try {
-    const out = await postCookingExpandStepsLlm(prefs, req.body || {});
-    if (!out.ok) return res.status(400).json({ error: out.error });
-    res.json({ steps: out.steps });
-  } catch (e) {
-    res.status(500).json({ error: e.message || String(e) });
+  const wantStream = String(req.headers.accept || "").includes("text/event-stream");
+  const prep = prepareCookingExpandStepsLlm(prefs, req.body || {});
+  if (!prep.ok) {
+    if (wantStream) { const { sendError } = setupSseResponse(res); return sendError(prep.error); }
+    return res.status(400).json({ error: prep.error });
+  }
+  if (wantStream && prep.backend === "cli") {
+    const { send, sendError } = setupSseResponse(res);
+    const ac = new AbortController();
+    req.on("close", () => ac.abort());
+    try {
+      const r = await runLlmCliCompletionStreaming(send, prep.llm, prep.prompt, prep.stats, ac.signal);
+      if (!r.ok) { sendError(r.error); return; }
+      const steps = String(r.text || "").trim().slice(0, 12000);
+      if (!steps) { send({ error: "模型未返回步骤" }); } else { send({ result: { steps } }); }
+    } catch (e) {
+      sendError(e.message || String(e));
+      return;
+    }
+    if (!res.writableEnded) res.end();
+  } else {
+    try {
+      const out = await postCookingExpandStepsLlm(prefs, req.body || {});
+      if (!out.ok) return res.status(400).json({ error: out.error });
+      res.json({ steps: out.steps });
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) });
+    }
   }
 });
 

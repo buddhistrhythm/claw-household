@@ -8,6 +8,77 @@ let restockItems = [];
 /** null = 显示全部渠道；Set = 仅显示集合内渠道（可为空集） */
 let restockChannelFilter = null;
 let purchaseChannelList = [];
+
+/* ─── SSE streaming fetch utility ─────────────────────────────────────────── */
+
+/**
+ * POST with SSE streaming support. If server responds with text/event-stream,
+ * reads chunks and calls onChunk; returns the final result from the stream.
+ * Falls back to regular JSON parsing for non-streaming responses.
+ *
+ * @param {string} url
+ * @param {object} body
+ * @param {(chunk: string) => void} onChunk - called for each text chunk
+ * @param {AbortSignal} [signal] - optional abort signal
+ * @returns {Promise<object>} - final result object from the stream or JSON response
+ */
+async function fetchWithStreaming(url, body, onChunk, signal) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  const ct = resp.headers.get('content-type') || '';
+  // Non-streaming response (HTTP backend or error)
+  if (!ct.includes('text/event-stream')) {
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    return data;
+  }
+
+  // SSE streaming response
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let finalResult = null;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+
+    // Parse complete SSE events (delimited by \n\n)
+    const parts = buf.split('\n\n');
+    buf = parts.pop(); // keep incomplete tail
+    for (const part of parts) {
+      for (const line of part.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+        if (evt.chunk && onChunk) onChunk(evt.chunk);
+        if (evt.error) throw new Error(evt.error);
+        if (evt.result) finalResult = evt.result;
+      }
+    }
+  }
+
+  // Process any remaining buffer
+  if (buf.trim()) {
+    for (const line of buf.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      let evt;
+      try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+      if (evt.chunk && onChunk) onChunk(evt.chunk);
+      if (evt.error) throw new Error(evt.error);
+      if (evt.result) finalResult = evt.result;
+    }
+  }
+
+  if (!finalResult) throw new Error('流式响应未返回最终结果');
+  return finalResult;
+}
 const sourcePickerState = { f: [], d: [] };
 let currentFilter = 'all';
 let scanner = null;
@@ -574,7 +645,7 @@ function renderCookingLlmRecos() {
       return `<div style="margin-top:10px;padding:10px;border-radius:8px;border:0.5px solid var(--border)">
         <div style="font-weight:600;margin-bottom:6px">${escapeHtml(d.name)}</div>
         <div style="font-size:12px;color:var(--subtext);margin-bottom:6px">用料：${ing}</div>
-        <details style="font-size:13px">
+        <details style="font-size:13px" id="llm-expand-steps-${idx}">
           <summary style="cursor:pointer;user-select:none;color:var(--accent)">做法</summary>
           <div style="margin-top:8px;line-height:1.5;font-size:13px;white-space:pre-wrap">${stepsHtml || '<span style="color:var(--subtext)">（无）</span>'}</div>
         </details>
@@ -598,23 +669,30 @@ async function fetchCookingLlmRecommendations() {
     btn.disabled = true;
     btn.textContent = '生成中…';
   }
+  // Show streaming progress area
+  const recosEl = document.getElementById('cook-llm-recos');
+  if (recosEl) recosEl.innerHTML = '<div class="llm-stream-progress" id="llm-stream-text">等待模型响应…</div>';
+  const ac = new AbortController();
   try {
-    const r = await fetch('/api/cooking/llm-recommendations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ count: 5, hint: hint.trim() }),
-    });
-    const d = await r.json();
-    if (!r.ok) {
-      showToast(d.error || '生成失败');
-      return;
-    }
+    const d = await fetchWithStreaming(
+      '/api/cooking/llm-recommendations',
+      { count: 5, hint: hint.trim() },
+      (chunk) => {
+        const el = document.getElementById('llm-stream-text');
+        if (el) {
+          if (el.textContent === '等待模型响应…') el.textContent = '';
+          el.textContent += chunk;
+          el.scrollTop = el.scrollHeight;
+        }
+      },
+      ac.signal,
+    );
     cookingLlmItems = Array.isArray(d.dishes) ? d.dishes : [];
     renderCookingLlmRecos();
     if (!cookingLlmItems.length) showToast('未返回菜谱');
     else showToast(`已生成 ${cookingLlmItems.length} 道菜`);
   } catch (e) {
-    showToast(e.message || '网络错误');
+    if (e.name !== 'AbortError') showToast(e.message || '网络错误');
   } finally {
     if (btn) {
       btn.disabled = !familyPrefs.llm_cooking_ready;
@@ -627,21 +705,22 @@ async function expandCookingLlmSteps(idx) {
   const d = cookingLlmItems[idx];
   if (!d || !familyPrefs || !familyPrefs.llm_cooking_ready) return;
   showToast('正在展开做法…');
+  // Show inline streaming progress
+  const stepsEl = document.getElementById('llm-expand-steps-' + idx);
+  if (stepsEl) stepsEl.innerHTML = '<div class="llm-stream-progress" id="llm-expand-stream-' + idx + '">等待模型响应…</div>';
   try {
-    const r = await fetch('/api/cooking/llm-expand-steps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: d.name,
-        ingredients: d.ingredients || [],
-        steps_brief: d.steps || '',
-      }),
-    });
-    const out = await r.json();
-    if (!r.ok) {
-      showToast(out.error || '失败');
-      return;
-    }
+    const out = await fetchWithStreaming(
+      '/api/cooking/llm-expand-steps',
+      { name: d.name, ingredients: d.ingredients || [], steps_brief: d.steps || '' },
+      (chunk) => {
+        const el = document.getElementById('llm-expand-stream-' + idx);
+        if (el) {
+          if (el.textContent === '等待模型响应…') el.textContent = '';
+          el.textContent += chunk;
+          el.scrollTop = el.scrollHeight;
+        }
+      },
+    );
     cookingLlmItems[idx] = { ...d, steps: out.steps || d.steps };
     renderCookingLlmRecos();
     showToast('已更新做法');
