@@ -15,6 +15,20 @@ const {
   decryptSecret,
   stripVaultForClient,
 } = require("./crypto-vault");
+const {
+  CLI_PRESETS,
+  llmOk: llmCookingOk,
+  complete: llmComplete,
+  completeCli: runLlmCliCompletion,
+  completeHttp: runLlmHttpCompletion,
+  completeCliStreaming: runLlmCliCompletionStreaming,
+  setupSseResponse,
+  stripAnsi,
+  extractCompletionText,
+  escapeForJsonStringContent,
+} = require("./lib/llm-completion");
+const { getDb, eav, prefs: dbPrefs, users: dbUsers, families: dbFamilies, invites: dbInvites } = require("./lib/db");
+const { requireAuth, optionalAuth, requireAdmin, googleAuth, appleAuth, signToken } = require("./lib/auth");
 
 // ─── Shared data layer ──────────────────────────────────────────────────────
 const { PATHS, readJSON, writeJSON, today, formatLocalDate, daysUntil, generateId } = require("./lib/data");
@@ -78,6 +92,236 @@ const upload = multer({
 });
 
 app.use(express.json());
+
+// ─── SQLite DB + Auth ────────────────────────────────────────────────────────
+const db = getDb();
+const auth = requireAuth(db);
+const authOpt = optionalAuth(db);
+const adminOnly = requireAdmin(db);
+
+// ─── Auth routes (public, no auth required) ──────────────────────────────────
+
+app.get("/api/auth/providers", (_req, res) => {
+  res.json({
+    google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    apple: !!(process.env.APPLE_CLIENT_ID && process.env.APPLE_TEAM_ID),
+    dev: process.env.AUTH_DISABLED === "1",
+  });
+});
+
+app.post("/api/auth/google", async (req, res) => {
+  try {
+    const result = await googleAuth(db, req.body || {});
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Google 登录失败" });
+  }
+});
+
+app.post("/api/auth/apple", async (req, res) => {
+  try {
+    const result = await appleAuth(db, req.body || {});
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Apple 登录失败" });
+  }
+});
+
+// Dev login (only when AUTH_DISABLED=1)
+app.post("/api/auth/dev", (req, res) => {
+  if (process.env.AUTH_DISABLED !== "1") return res.status(403).json({ error: "开发模式未启用" });
+  const user = dbUsers.findByProviderSub(db, "dev", "local") ||
+    dbUsers.upsertFromOAuth(db, { provider: "dev", sub: "local", email: "dev@localhost", name: "本地用户", avatarUrl: "" });
+  let fams = dbUsers.getFamilies(db, user.id);
+  if (!fams.length) {
+    dbFamilies.create(db, "我的家庭", user.id);
+    fams = dbUsers.getFamilies(db, user.id);
+  }
+  const familyId = fams[0].id;
+  const token = signToken({ userId: user.id, familyId });
+  res.json({ ok: true, token, user: { id: user.id, email: user.email, name: user.name }, families: fams, currentFamilyId: familyId });
+});
+
+app.get("/api/auth/me", auth, (req, res) => {
+  const fams = dbUsers.getFamilies(db, req.userId);
+  res.json({
+    user: { id: req.user.id, email: req.user.email, name: req.user.name, avatar_url: req.user.avatar_url },
+    families: fams.map((f) => ({ id: f.id, name: f.name, role: f.role })),
+    currentFamilyId: req.familyId,
+  });
+});
+
+// Switch active family
+app.post("/api/auth/switch-family", auth, (req, res) => {
+  const { familyId } = req.body || {};
+  if (!familyId) return res.status(400).json({ error: "familyId 必填" });
+  if (!dbFamilies.isMember(db, familyId, req.userId)) return res.status(403).json({ error: "你不是该家庭成员" });
+  const token = signToken({ userId: req.userId, familyId });
+  res.json({ ok: true, token, currentFamilyId: familyId });
+});
+
+// ─── Family management (auth required) ──────────────────────────────────────
+
+app.post("/api/families", auth, (req, res) => {
+  const name = String(req.body?.name || "").trim() || "新家庭";
+  const fam = dbFamilies.create(db, name, req.userId);
+  const token = signToken({ userId: req.userId, familyId: fam.id });
+  res.json({ ok: true, family: fam, token });
+});
+
+app.get("/api/families/:id/members", auth, (req, res) => {
+  if (!dbFamilies.isMember(db, req.params.id, req.userId)) return res.status(403).json({ error: "无权限" });
+  res.json({ members: dbFamilies.getMembers(db, req.params.id) });
+});
+
+app.delete("/api/families/:id/members/:userId", auth, adminOnly, (req, res) => {
+  const famId = req.params.id;
+  const targetId = req.params.userId;
+  if (targetId === req.userId) return res.status(400).json({ error: "不能移除自己" });
+  dbFamilies.removeMember(db, famId, targetId);
+  res.json({ ok: true });
+});
+
+app.patch("/api/families/:id/members/:userId/role", auth, adminOnly, (req, res) => {
+  const role = req.body?.role;
+  if (!["admin", "member"].includes(role)) return res.status(400).json({ error: "角色无效" });
+  dbFamilies.setRole(db, req.params.id, req.params.userId, role);
+  res.json({ ok: true });
+});
+
+// ─── Invites ─────────────────────────────────────────────────────────────────
+
+app.post("/api/families/:id/invites", auth, adminOnly, (req, res) => {
+  const inv = dbInvites.create(db, req.params.id, req.userId, req.body || {});
+  res.json({ ok: true, invite: inv });
+});
+
+app.post("/api/invites/redeem", auth, (req, res) => {
+  const code = String(req.body?.code || "").trim().toUpperCase();
+  if (!code) return res.status(400).json({ error: "邀请码必填" });
+  const result = dbInvites.redeem(db, code, req.userId);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  const token = signToken({ userId: req.userId, familyId: result.familyId });
+  res.json({ ok: true, familyId: result.familyId, token });
+});
+
+// ─── Entity templates (dynamic database types) ──────────────────────────────
+
+app.get("/api/templates", auth, (req, res) => {
+  res.json({ templates: eav.listTemplates(db, req.familyId) });
+});
+
+app.get("/api/templates/:typeKey", auth, (req, res) => {
+  const t = eav.getTemplate(db, req.params.typeKey, req.familyId);
+  if (!t) return res.status(404).json({ error: "模板不存在" });
+  const props = eav.getPropDefs(db, req.params.typeKey);
+  res.json({ template: t, props });
+});
+
+app.post("/api/templates", auth, adminOnly, (req, res) => {
+  const { type_key, label, icon, description, sort_order, config, props } = req.body || {};
+  if (!type_key || !/^[a-z][a-z0-9_]{1,48}$/.test(type_key)) {
+    return res.status(400).json({ error: "type_key 须为 2-50 位小写字母/数字/下划线" });
+  }
+  const result = eav.createTemplate(db, req.familyId, type_key, { label, icon, description, sort_order, config }, props || []);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true, template: eav.getTemplate(db, type_key, req.familyId) });
+});
+
+app.patch("/api/templates/:typeKey", auth, adminOnly, (req, res) => {
+  const result = eav.updateTemplate(db, req.familyId, req.params.typeKey, req.body || {});
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true, template: eav.getTemplate(db, req.params.typeKey, req.familyId) });
+});
+
+app.delete("/api/templates/:typeKey", auth, adminOnly, (req, res) => {
+  const result = eav.deleteTemplate(db, req.familyId, req.params.typeKey);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true });
+});
+
+app.post("/api/templates/:typeKey/clone", auth, adminOnly, (req, res) => {
+  const { new_type_key, label, icon, description } = req.body || {};
+  if (!new_type_key || !/^[a-z][a-z0-9_]{1,48}$/.test(new_type_key)) {
+    return res.status(400).json({ error: "new_type_key 须为 2-50 位小写字母/数字/下划线" });
+  }
+  const result = eav.cloneTemplate(db, req.familyId, req.params.typeKey, new_type_key, { label, icon, description });
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true, template: eav.getTemplate(db, new_type_key, req.familyId) });
+});
+
+// ─── EAV generic endpoints (Notion-like database API) ────────────────────────
+
+app.get("/api/eav/:entityType/schema", auth, (req, res) => {
+  res.json({ props: eav.getPropDefs(db, req.params.entityType) });
+});
+
+app.post("/api/eav/:entityType/schema", auth, adminOnly, (req, res) => {
+  const { prop_name, data_type, label, sort_order, config } = req.body || {};
+  if (!prop_name) return res.status(400).json({ error: "prop_name 必填" });
+  eav.upsertPropDef(db, req.params.entityType, prop_name, { data_type, label, sort_order, config });
+  res.json({ ok: true });
+});
+
+app.get("/api/eav/:entityType", auth, (req, res) => {
+  const where = {};
+  for (const [k, v] of Object.entries(req.query)) {
+    if (k.startsWith("_")) continue;
+    where[k] = v;
+  }
+  const entities = eav.listEntities(db, req.familyId, req.params.entityType, {
+    where: Object.keys(where).length ? where : undefined,
+    orderBy: req.query._sort,
+    desc: req.query._desc === "1",
+    limit: parseInt(req.query._limit) || undefined,
+  });
+  res.json({ items: entities, total: entities.length });
+});
+
+app.get("/api/eav/:entityType/:id", auth, (req, res) => {
+  const ent = eav.getEntity(db, req.params.id);
+  if (!ent || ent._family_id !== req.familyId) return res.status(404).json({ error: "未找到" });
+  res.json(ent);
+});
+
+app.post("/api/eav/:entityType", auth, (req, res) => {
+  const crypto = require("crypto");
+  const id = req.body?.id || `${req.params.entityType.replace(/_/g, "")}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString("hex")}`;
+  const props = { ...req.body };
+  delete props.id;
+  eav.upsertEntity(db, req.familyId, req.params.entityType, id, props, req.userId);
+  res.json({ ok: true, id, entity: eav.getEntity(db, id) });
+});
+
+app.patch("/api/eav/:entityType/:id", auth, (req, res) => {
+  const ent = eav.getEntity(db, req.params.id);
+  if (!ent || ent._family_id !== req.familyId) return res.status(404).json({ error: "未找到" });
+  eav.patchEntity(db, req.params.id, req.body || {});
+  res.json({ ok: true, entity: eav.getEntity(db, req.params.id) });
+});
+
+app.delete("/api/eav/:entityType/:id", auth, (req, res) => {
+  const ent = eav.getEntity(db, req.params.id);
+  if (!ent || ent._family_id !== req.familyId) return res.status(404).json({ error: "未找到" });
+  eav.archiveEntity(db, req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── Preferences (family-scoped) via DB ──────────────────────────────────────
+
+app.get("/api/v2/preferences", auth, (req, res) => {
+  res.json(dbPrefs.getAll(db, req.familyId));
+});
+
+app.patch("/api/v2/preferences", auth, (req, res) => {
+  const pairs = Object.entries(req.body || {});
+  if (!pairs.length) return res.status(400).json({ error: "空请求体" });
+  dbPrefs.setMany(db, req.familyId, pairs);
+  res.json({ ok: true, preferences: dbPrefs.getAll(db, req.familyId) });
+});
+
 // 静态资源放在所有 /api 路由之后注册，避免与接口路径冲突
 
 // ─── Utility functions imported from lib/data.js & lib/inventory-ops.js ────
@@ -780,18 +1024,6 @@ function isCookingInventoryCategory(cat) {
   return cat && !NON_COOKING_INGREDIENT_CATEGORIES.has(cat);
 }
 
-function llmCookingOk(llm) {
-  if (!llm || typeof llm !== "object") return false;
-  const backend = String(llm.backend || "http").toLowerCase();
-  if (backend === "cli") return !!String(llm.cli_command || "").trim();
-  const url = String(llm.completion_url || "").trim();
-  if (!url) return false;
-  const authStyle = llm.auth_style || "bearer";
-  const key = String(llm.api_key || "").trim();
-  if (authStyle !== "none" && !key) return false;
-  return true;
-}
-
 function mergePreferencesDisplay() {
   const prefs = readJSON(PREFERENCES_PATH);
   const family = prefs.family || {};
@@ -857,23 +1089,6 @@ function inventorySubtitleStats(prefs) {
   return { count: items.length, urgent, urgent_threshold_days: urg };
 }
 
-function escapeForJsonStringContent(s) {
-  return JSON.stringify(String(s)).slice(1, -1);
-}
-
-function extractCompletionText(json) {
-  if (json == null) return "";
-  if (typeof json === "string") return json.trim();
-  const c0 = json.choices && json.choices[0];
-  if (c0?.message?.content != null) return String(c0.message.content).trim();
-  if (c0?.text != null) return String(c0.text).trim();
-  const cand = json.candidates && json.candidates[0];
-  if (cand?.content?.parts?.[0]?.text != null) return String(cand.content.parts[0].text).trim();
-  if (json.content != null) return String(json.content).trim();
-  if (json.output_text != null) return String(json.output_text).trim();
-  return "";
-}
-
 function buildLlmInventoryPrompt(llm, stats) {
   const custom = llm.user_prompt_template != null ? String(llm.user_prompt_template).trim() : "";
   if (custom) {
@@ -888,198 +1103,18 @@ function buildLlmInventoryPrompt(llm, stats) {
   );
 }
 
-function applyLlmAuthHeaders(headers, llm, key) {
-  const style = llm.auth_style || "bearer";
-  if (style === "none") return;
-  if (style === "x_api_key") {
-    headers["x-api-key"] = key;
-    return;
-  }
-  headers.Authorization = `Bearer ${key}`;
-}
-
-function expandCliArgPlaceholders(s, llm, prompt, stats) {
-  const model = String(llm.model || "").trim();
-  return String(s)
-    .replace(/<<<PROMPT>>>/g, prompt)
-    .replace(/<<<MODEL>>>/g, model)
-    .replace(/<<<COUNT>>>/g, String(stats.count))
-    .replace(/<<<URGENT>>>/g, String(stats.urgent))
-    .replace(/<<<URGENT_DAYS>>>/g, String(stats.urgent_threshold_days));
-}
-
-function stripAnsi(s) {
-  return String(s).replace(/\x1b\[[0-9;]*m/g, "");
-}
-
-function normalizeCliArgs(llm, prompt, stats) {
-  const raw = llm.cli_args;
-  let arr;
-  if (Array.isArray(raw)) {
-    arr = raw;
-  } else if (typeof raw === "string" && raw.trim()) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return { ok: false, error: "cli_args 须为 JSON 数组" };
-      arr = parsed;
-    } catch (e) {
-      return { ok: false, error: `cli_args JSON 无效：${e.message || e}` };
-    }
-  } else {
-    return { ok: false, error: "请配置 cli_args（JSON 数组），例如 [\"-p\",\"<<<PROMPT>>>\"]" };
-  }
-  const args = arr.map((a) => expandCliArgPlaceholders(a, llm, prompt, stats));
-  return { ok: true, args };
-}
-
-function runSpawned(command, args, opts) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (fn, arg) => {
-      if (settled) return;
-      settled = true;
-      fn(arg);
-    };
-    const proc = spawn(command, args, {
-      shell: false,
-      env: { ...process.env },
-      cwd: opts.cwd || undefined,
-    });
-    let out = "";
-    let err = "";
-    const timeoutMs = opts.timeoutMs || 120000;
-    const t = setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch (_) {}
-      finish(reject, new Error(`CLI 超时（${timeoutMs}ms）`));
-    }, timeoutMs);
-    proc.stdout.on("data", (d) => {
-      out += d.toString();
-      if (out.length > 2_000_000) {
-        try {
-          proc.kill("SIGKILL");
-        } catch (_) {}
-      }
-    });
-    proc.stderr.on("data", (d) => {
-      err += d.toString();
-    });
-    proc.on("error", (e) => {
-      clearTimeout(t);
-      finish(reject, e);
-    });
-    proc.on("close", (code) => {
-      clearTimeout(t);
-      if (settled) return;
-      if (code !== 0 && !out.trim()) {
-        finish(reject, new Error((err || `退出码 ${code}`).slice(0, 1200)));
-        return;
-      }
-      finish(resolve, { stdout: out, stderr: err, code: code || 0 });
-    });
-  });
-}
-
-async function runLlmCliCompletion(llm, prompt, stats) {
-  const cmd = String(llm.cli_command || "").trim();
-  if (!cmd) return { ok: false, error: "请配置本地 CLI 命令（cli_command）" };
-  const norm = normalizeCliArgs(llm, prompt, stats);
-  if (!norm.ok) return norm;
-  const timeoutRaw = llm.cli_timeout_ms;
-  const timeoutMs = Math.min(
-    Math.max(parseInt(timeoutRaw, 10) || 120000, 5000),
-    600000
-  );
-  const cwdRaw = llm.cli_cwd != null ? String(llm.cli_cwd).trim() : "";
-  let cwd;
-  if (cwdRaw) {
-    if (!fs.existsSync(cwdRaw)) return { ok: false, error: `cli_cwd 不存在：${cwdRaw}` };
-    cwd = cwdRaw;
-  }
-  try {
-    const { stdout, stderr, code } = await runSpawned(cmd, norm.args, { timeoutMs, cwd });
-    let text = stripAnsi(stdout).trim();
-    if (!text && stderr.trim()) text = stripAnsi(stderr).trim();
-    if (!text) return { ok: false, error: code !== 0 ? (stderr || `CLI 退出码 ${code}`).slice(0, 800) : "CLI 无输出" };
-    return { ok: true, text };
-  } catch (e) {
-    return { ok: false, error: e.message || String(e) };
-  }
-}
-
-async function postInventorySubtitleCli(llm, prompt, stats) {
-  const r = await runLlmCliCompletion(llm, prompt, stats);
-  if (!r.ok) return r;
-  const line = r.text.split(/\r?\n/).find((l) => l.trim()) || r.text;
-  const subtitle = line.trim().slice(0, 500);
-  if (!subtitle) return { ok: false, error: "CLI 输出为空" };
-  return { ok: true, subtitle, stats };
-}
-
-async function runLlmHttpCompletion(llm, prompt, maxTokens) {
-  const url = String(llm.completion_url || "").trim();
-  const key = String(llm.api_key || "").trim();
-  const authStyle = llm.auth_style || "bearer";
-  if (!url) return { ok: false, error: "请先配置 completion URL，或改用「本地 CLI」" };
-  if (authStyle !== "none" && !key) return { ok: false, error: "请先配置 API Key，或将鉴权改为「无」" };
-
-  const model = String(llm.model || "gpt-4o-mini").trim() || "gpt-4o-mini";
-  const mt = Math.min(Math.max(parseInt(maxTokens, 10) || 2000, 50), 8000);
-
-  let bodyObj;
-  const tpl = llm.body_template != null ? String(llm.body_template).trim() : "";
-  if (tpl) {
-    try {
-      const raw = tpl
-        .replace(/<<<MODEL>>>/g, model)
-        .replace(/<<<PROMPT>>>/g, escapeForJsonStringContent(prompt));
-      bodyObj = JSON.parse(raw);
-    } catch (e) {
-      return { ok: false, error: `body_template 解析失败：${e.message || e}` };
-    }
-  } else {
-    bodyObj = {
-      model,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: mt,
-    };
-  }
-
-  const headers = { "Content-Type": "application/json" };
-  applyLlmAuthHeaders(headers, llm, key);
-
-  const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(bodyObj) });
-  const text = await r.text();
-  if (!r.ok) {
-    return { ok: false, error: text.slice(0, 800) || `HTTP ${r.status}` };
-  }
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    return { ok: false, error: "响应不是 JSON" };
-  }
-  const out = extractCompletionText(json);
-  if (!out) return { ok: false, error: "模型未返回可用文本" };
-  return { ok: true, text: out };
-}
-
 async function postInventorySubtitleLlm(prefs) {
   const mode = prefs.ui?.inventory_subtitle_mode;
   if (mode !== "llm") return { ok: false, error: "未启用大模型副标题" };
   const llm = prefs.llm || {};
-  const backend = String(llm.backend || "http").toLowerCase();
   const stats = inventorySubtitleStats(prefs);
   const prompt = buildLlmInventoryPrompt(llm, stats);
-
-  if (backend === "cli") {
-    return postInventorySubtitleCli(llm, prompt, stats);
-  }
-
-  const httpOut = await runLlmHttpCompletion(llm, prompt, 120);
-  if (!httpOut.ok) return httpOut;
-  return { ok: true, subtitle: httpOut.text, stats };
+  const r = await llmComplete(llm, prompt, { maxTokens: 120, stats });
+  if (!r.ok) return r;
+  const line = r.text.split(/\r?\n/).find((l) => l.trim()) || r.text;
+  const subtitle = line.trim().slice(0, 500);
+  if (!subtitle) return { ok: false, error: "输出为空" };
+  return { ok: true, subtitle, stats };
 }
 
 function stripJsonFences(s) {
@@ -1224,7 +1259,7 @@ function buildExpandStepsPrompt(prefs, name, ingredients, stepsBrief) {
     .join("\n\n");
 }
 
-async function postCookingRecommendationsLlm(prefs, body) {
+function prepareCookingRecommendationsLlm(prefs, body) {
   const llm = prefs.llm || {};
   if (!llmCookingOk(llm)) {
     return { ok: false, error: "请先在配置中填写 llm（completion URL + API Key，或本地 CLI）" };
@@ -1234,20 +1269,18 @@ async function postCookingRecommendationsLlm(prefs, body) {
   const prompt = buildCookingRecommendPrompt(prefs, count, hint);
   const backend = String(llm.backend || "http").toLowerCase();
   const stats = inventorySubtitleStats(prefs);
-  let textOut;
-  if (backend === "cli") {
-    const r = await runLlmCliCompletion(llm, prompt, stats);
-    if (!r.ok) return r;
-    textOut = r.text;
-  } else {
-    const r = await runLlmHttpCompletion(llm, prompt, 3500);
-    if (!r.ok) return r;
-    textOut = r.text;
-  }
-  return parseCookingRecommendationsArray(textOut);
+  return { ok: true, llm, prompt, backend, stats };
 }
 
-async function postCookingExpandStepsLlm(prefs, body) {
+async function postCookingRecommendationsLlm(prefs, body) {
+  const prep = prepareCookingRecommendationsLlm(prefs, body);
+  if (!prep.ok) return prep;
+  const r = await llmComplete(prep.llm, prep.prompt, { maxTokens: 3500, stats: prep.stats });
+  if (!r.ok) return r;
+  return parseCookingRecommendationsArray(r.text);
+}
+
+function prepareCookingExpandStepsLlm(prefs, body) {
   const llm = prefs.llm || {};
   if (!llmCookingOk(llm)) {
     return { ok: false, error: "请先在配置中填写 llm（completion URL + API Key，或本地 CLI）" };
@@ -1259,17 +1292,15 @@ async function postCookingExpandStepsLlm(prefs, body) {
   const prompt = buildExpandStepsPrompt(prefs, name, ingredients, stepsBrief);
   const backend = String(llm.backend || "http").toLowerCase();
   const stats = inventorySubtitleStats(prefs);
-  let textOut;
-  if (backend === "cli") {
-    const r = await runLlmCliCompletion(llm, prompt, stats);
-    if (!r.ok) return r;
-    textOut = r.text;
-  } else {
-    const r = await runLlmHttpCompletion(llm, prompt, 2500);
-    if (!r.ok) return r;
-    textOut = r.text;
-  }
-  const steps = String(textOut || "").trim().slice(0, 12000);
+  return { ok: true, llm, prompt, backend, stats };
+}
+
+async function postCookingExpandStepsLlm(prefs, body) {
+  const prep = prepareCookingExpandStepsLlm(prefs, body);
+  if (!prep.ok) return prep;
+  const r = await llmComplete(prep.llm, prep.prompt, { maxTokens: 2500, stats: prep.stats });
+  if (!r.ok) return r;
+  const steps = String(r.text || "").trim().slice(0, 12000);
   if (!steps) return { ok: false, error: "模型未返回步骤" };
   return { ok: true, steps };
 }
@@ -1278,15 +1309,46 @@ app.get("/api/preferences", (req, res) => {
   res.json(mergePreferencesDisplay());
 });
 
+app.get("/api/llm/presets", (_req, res) => {
+  res.json(CLI_PRESETS);
+});
+
 /** 储物 Tab 副标题：服务端代调用 completion（API Key 仅存服务端 preferences.json） */
 app.post("/api/inventory-subtitle/llm", async (req, res) => {
   const prefs = readJSON(PREFERENCES_PATH);
-  try {
-    const out = await postInventorySubtitleLlm(prefs);
-    if (!out.ok) return res.status(400).json({ error: out.error });
-    res.json({ subtitle: out.subtitle, stats: out.stats });
-  } catch (e) {
-    res.status(500).json({ error: e.message || String(e) });
+  const wantStream = String(req.headers.accept || "").includes("text/event-stream");
+  const llmConf = prefs.llm && typeof prefs.llm === "object" ? prefs.llm : {};
+  const backend = String(llmConf.backend || "http").toLowerCase();
+  if (wantStream && backend === "cli") {
+    const mode = (prefs.ui || {}).inventory_subtitle_mode;
+    if (mode !== "llm") {
+      const { sendError } = setupSseResponse(res);
+      return sendError("未启用大模型副标题");
+    }
+    const { send, sendError } = setupSseResponse(res);
+    const ac = new AbortController();
+    req.on("close", () => ac.abort());
+    const stats = inventorySubtitleStats(prefs);
+    const prompt = buildLlmInventoryPrompt(llmConf, stats);
+    try {
+      const r = await runLlmCliCompletionStreaming(send, llmConf, prompt, stats, ac.signal);
+      if (!r.ok) { sendError(r.error); return; }
+      const line = r.text.split(/\r?\n/).find((l) => l.trim()) || r.text;
+      const subtitle = line.trim().slice(0, 500);
+      if (!subtitle) { send({ error: "CLI 输出为空" }); } else { send({ result: { subtitle, stats } }); }
+    } catch (e) {
+      sendError(e.message || String(e));
+      return;
+    }
+    if (!res.writableEnded) res.end();
+  } else {
+    try {
+      const out = await postInventorySubtitleLlm(prefs);
+      if (!out.ok) return res.status(400).json({ error: out.error });
+      res.json({ subtitle: out.subtitle, stats: out.stats });
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) });
+    }
   }
 });
 
@@ -1715,23 +1777,67 @@ app.delete("/api/cooking/pending-ingredient", (req, res) => {
 
 app.post("/api/cooking/llm-recommendations", async (req, res) => {
   const prefs = readJSON(PREFERENCES_PATH);
-  try {
-    const out = await postCookingRecommendationsLlm(prefs, req.body || {});
-    if (!out.ok) return res.status(400).json({ error: out.error });
-    res.json({ dishes: out.dishes });
-  } catch (e) {
-    res.status(500).json({ error: e.message || String(e) });
+  const wantStream = String(req.headers.accept || "").includes("text/event-stream");
+  const prep = prepareCookingRecommendationsLlm(prefs, req.body || {});
+  if (!prep.ok) {
+    if (wantStream) { const { sendError } = setupSseResponse(res); return sendError(prep.error); }
+    return res.status(400).json({ error: prep.error });
+  }
+  if (wantStream && prep.backend === "cli") {
+    const { send, sendError } = setupSseResponse(res);
+    const ac = new AbortController();
+    req.on("close", () => ac.abort());
+    try {
+      const r = await runLlmCliCompletionStreaming(send, prep.llm, prep.prompt, prep.stats, ac.signal);
+      if (!r.ok) { sendError(r.error); return; }
+      const parsed = parseCookingRecommendationsArray(r.text);
+      if (!parsed.ok) { send({ error: parsed.error }); } else { send({ result: { dishes: parsed.dishes } }); }
+    } catch (e) {
+      sendError(e.message || String(e));
+      return;
+    }
+    if (!res.writableEnded) res.end();
+  } else {
+    try {
+      const out = await postCookingRecommendationsLlm(prefs, req.body || {});
+      if (!out.ok) return res.status(400).json({ error: out.error });
+      res.json({ dishes: out.dishes });
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) });
+    }
   }
 });
 
 app.post("/api/cooking/llm-expand-steps", async (req, res) => {
   const prefs = readJSON(PREFERENCES_PATH);
-  try {
-    const out = await postCookingExpandStepsLlm(prefs, req.body || {});
-    if (!out.ok) return res.status(400).json({ error: out.error });
-    res.json({ steps: out.steps });
-  } catch (e) {
-    res.status(500).json({ error: e.message || String(e) });
+  const wantStream = String(req.headers.accept || "").includes("text/event-stream");
+  const prep = prepareCookingExpandStepsLlm(prefs, req.body || {});
+  if (!prep.ok) {
+    if (wantStream) { const { sendError } = setupSseResponse(res); return sendError(prep.error); }
+    return res.status(400).json({ error: prep.error });
+  }
+  if (wantStream && prep.backend === "cli") {
+    const { send, sendError } = setupSseResponse(res);
+    const ac = new AbortController();
+    req.on("close", () => ac.abort());
+    try {
+      const r = await runLlmCliCompletionStreaming(send, prep.llm, prep.prompt, prep.stats, ac.signal);
+      if (!r.ok) { sendError(r.error); return; }
+      const steps = String(r.text || "").trim().slice(0, 12000);
+      if (!steps) { send({ error: "模型未返回步骤" }); } else { send({ result: { steps } }); }
+    } catch (e) {
+      sendError(e.message || String(e));
+      return;
+    }
+    if (!res.writableEnded) res.end();
+  } else {
+    try {
+      const out = await postCookingExpandStepsLlm(prefs, req.body || {});
+      if (!out.ok) return res.status(400).json({ error: out.error });
+      res.json({ steps: out.steps });
+    } catch (e) {
+      res.status(500).json({ error: e.message || String(e) });
+    }
   }
 });
 

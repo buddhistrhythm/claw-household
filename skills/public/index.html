@@ -701,9 +701,64 @@
   }
   .diaper-import-tier summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
   .diaper-import-tier .form-row { margin-bottom: 8px; }
+  .llm-stream-progress {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--subtext);
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 10px;
+    background: var(--bg-card);
+    border-radius: 6px;
+    border: 1px dashed var(--border);
+    margin-top: 8px;
+    line-height: 1.6;
+  }
 </style>
 </head>
 <body>
+
+<!-- ═══ Login overlay ═══════════════════════════════════════════════════════ -->
+<div id="login-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column">
+  <div style="text-align:center;max-width:320px;padding:24px">
+    <div style="font-size:48px;margin-bottom:16px">🏠</div>
+    <h1 style="margin:0 0 8px;font-size:22px">家用AI</h1>
+    <p style="color:var(--subtext);font-size:14px;margin:0 0 24px">家庭智能管理系统</p>
+    <div id="login-buttons" style="display:flex;flex-direction:column;gap:12px">
+      <button id="login-google-btn" type="button" style="display:none;padding:12px 20px;border-radius:8px;border:1px solid var(--border);background:white;color:#333;font-size:15px;cursor:pointer;font-weight:500" onclick="loginWithGoogle()">
+        <svg viewBox="0 0 24 24" width="18" height="18" style="vertical-align:middle;margin-right:8px"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        使用 Google 登录
+      </button>
+      <button id="login-apple-btn" type="button" style="display:none;padding:12px 20px;border-radius:8px;border:1px solid var(--border);background:#000;color:#fff;font-size:15px;cursor:pointer;font-weight:500" onclick="loginWithApple()">
+        <svg viewBox="0 0 24 24" width="18" height="18" style="vertical-align:middle;margin-right:8px" fill="white"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+        使用 Apple 登录
+      </button>
+      <button id="login-dev-btn" type="button" style="display:none;padding:12px 20px;border-radius:8px;border:1px dashed var(--border);background:var(--bg-card);color:var(--text);font-size:14px;cursor:pointer" onclick="loginDev()">
+        本地开发模式（无需登录）
+      </button>
+    </div>
+    <div id="login-error" style="color:#e53e3e;font-size:13px;margin-top:12px;display:none"></div>
+    <!-- Family invite code -->
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
+      <p style="font-size:12px;color:var(--subtext);margin:0 0 8px">已有邀请码？</p>
+      <div style="display:flex;gap:8px">
+        <input id="invite-code-input" type="text" placeholder="输入邀请码" class="form-input" style="flex:1;text-transform:uppercase">
+        <button type="button" class="source-add-btn" onclick="redeemInviteFromLogin()">加入</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Family switcher bar (shown when logged in with multiple families) ══ -->
+<div id="family-bar" style="display:none;background:var(--bg-card);border-bottom:1px solid var(--border);padding:6px 16px;font-size:13px;display:flex;align-items:center;gap:8px">
+  <span style="color:var(--subtext)">家庭：</span>
+  <select id="family-select" class="form-input" style="flex:1;max-width:200px;padding:4px 8px;font-size:13px" onchange="switchFamily(this.value)"></select>
+  <button type="button" style="font-size:12px;color:var(--accent);background:none;border:none;cursor:pointer" onclick="showFamilySettings()">管理</button>
+  <span style="flex:1"></span>
+  <button type="button" style="font-size:12px;color:var(--subtext);background:none;border:none;cursor:pointer" onclick="logout()">退出</button>
+</div>
 
 <div class="header">
   <div>
@@ -1368,6 +1423,7 @@
           <select id="settings-llm-cli-preset" class="form-input" style="margin-bottom:10px;max-width:100%" onchange="applyLlmCliPreset(this.value)">
             <option value="">（不套用）</option>
             <option value="claude">Claude Code（claude -p）</option>
+            <option value="openclaw">OpenClaw（openclaw run）</option>
             <option value="gemini">Gemini CLI（gemini -p）</option>
             <option value="codex">Codex CLI（codex -p）</option>
           </select>
@@ -1383,6 +1439,24 @@
         <p style="font-size:12px;color:var(--subtext);margin:8px 0 0">订阅制云端：TODO（后续接入）</p>
       </div>
       <button type="button" class="big-btn btn-primary" style="margin-top:12px" onclick="saveSettingsSubtitle()">保存小标题与 LLM</button>
+    </div>
+    <!-- ── 数据模板管理 ── -->
+    <div class="card">
+      <div class="card-title">数据模板（Notion 式数据库）</div>
+      <p style="font-size:12px;color:var(--subtext);margin:0 0 10px">内置模板不可删除。可新建自定义模板或从内置模板克隆扩展。</p>
+      <div id="templates-list" style="margin-bottom:12px"></div>
+      <details style="font-size:13px">
+        <summary style="cursor:pointer;color:var(--accent);user-select:none">新建自定义模板</summary>
+        <div style="margin-top:10px">
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input id="tpl-new-key" class="form-input" placeholder="type_key（英文小写+下划线）" style="flex:1">
+            <input id="tpl-new-icon" class="form-input" placeholder="图标" style="width:48px;text-align:center" maxlength="4">
+          </div>
+          <input id="tpl-new-label" class="form-input" placeholder="显示名称" style="margin-bottom:8px">
+          <textarea id="tpl-new-props" class="form-input" rows="4" placeholder='属性定义（每行一个）：&#10;name 名称 text&#10;quantity 数量 number&#10;done 已完成 boolean' style="margin-bottom:8px;resize:vertical;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+          <button type="button" class="source-add-btn" onclick="createCustomTemplate()">创建模板</button>
+        </div>
+      </details>
     </div>
     <div class="card">
       <div class="card-title">说明</div>
@@ -1611,6 +1685,295 @@
 </div>
 
 <script>
+/* ─── Auth state ──────────────────────────────────────────────────────────── */
+let authToken = localStorage.getItem('auth_token') || null;
+let authUser = null;
+let authFamilies = [];
+let currentFamilyId = localStorage.getItem('current_family_id') || null;
+
+function authHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+  return h;
+}
+
+function authFetch(url, opts = {}) {
+  if (!opts.headers) opts.headers = {};
+  if (authToken) opts.headers['Authorization'] = `Bearer ${authToken}`;
+  if (!opts.headers['Content-Type'] && opts.body) opts.headers['Content-Type'] = 'application/json';
+  return fetch(url, opts);
+}
+
+async function initAuth() {
+  const overlay = document.getElementById('login-overlay');
+  // Check available providers
+  try {
+    const r = await fetch('/api/auth/providers');
+    const p = await r.json();
+    if (p.google) document.getElementById('login-google-btn').style.display = 'block';
+    if (p.apple) document.getElementById('login-apple-btn').style.display = 'block';
+    if (p.dev) document.getElementById('login-dev-btn').style.display = 'block';
+
+    // If dev mode and no token, auto-login
+    if (p.dev && !authToken) {
+      await loginDev();
+      return;
+    }
+  } catch {}
+
+  if (!authToken) {
+    overlay.style.display = 'flex';
+    return;
+  }
+
+  // Validate token
+  try {
+    const r = await authFetch('/api/auth/me');
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    authUser = d.user;
+    authFamilies = d.families || [];
+    currentFamilyId = d.currentFamilyId || currentFamilyId;
+    localStorage.setItem('current_family_id', currentFamilyId || '');
+    overlay.style.display = 'none';
+    renderFamilyBar();
+    startApp();
+  } catch {
+    authToken = null;
+    localStorage.removeItem('auth_token');
+    overlay.style.display = 'flex';
+  }
+}
+
+function handleAuthResult(d) {
+  authToken = d.token;
+  authUser = d.user;
+  authFamilies = d.families || [];
+  currentFamilyId = d.currentFamilyId || (d.families?.[0]?.id);
+  localStorage.setItem('auth_token', authToken);
+  localStorage.setItem('current_family_id', currentFamilyId || '');
+  document.getElementById('login-overlay').style.display = 'none';
+  renderFamilyBar();
+  startApp();
+}
+
+async function loginDev() {
+  try {
+    const r = await fetch('/api/auth/dev', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    handleAuthResult(d);
+  } catch (e) {
+    const el = document.getElementById('login-error');
+    if (el) { el.textContent = e.message; el.style.display = 'block'; }
+  }
+}
+
+function loginWithGoogle() {
+  const clientId = prompt('请输入 Google Client ID（或在 .env 配置 GOOGLE_CLIENT_ID）：');
+  if (!clientId) return;
+  const redirect = window.location.origin + '/api/auth/google/callback';
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=openid%20email%20profile&access_type=offline`;
+  window.location.href = url;
+}
+
+function loginWithApple() {
+  const clientId = prompt('请输入 Apple Client ID（或在 .env 配置 APPLE_CLIENT_ID）：');
+  if (!clientId) return;
+  const redirect = window.location.origin + '/api/auth/apple/callback';
+  const url = `https://appleid.apple.com/auth/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=name%20email&response_mode=form_post`;
+  window.location.href = url;
+}
+
+async function redeemInviteFromLogin() {
+  const code = document.getElementById('invite-code-input')?.value?.trim();
+  if (!code) return showToast('请输入邀请码');
+  if (!authToken) return showToast('请先登录');
+  try {
+    const r = await authFetch('/api/invites/redeem', { method: 'POST', body: JSON.stringify({ code }) });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error || '兑换失败');
+    authToken = d.token;
+    currentFamilyId = d.familyId;
+    localStorage.setItem('auth_token', authToken);
+    localStorage.setItem('current_family_id', currentFamilyId);
+    showToast('已成功加入家庭！');
+    location.reload();
+  } catch (e) {
+    showToast(e.message || '网络错误');
+  }
+}
+
+function renderFamilyBar() {
+  const bar = document.getElementById('family-bar');
+  const sel = document.getElementById('family-select');
+  if (!bar || !sel) return;
+  if (authFamilies.length <= 1 && !(authUser && authUser.name)) {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'flex';
+  sel.innerHTML = authFamilies.map((f) =>
+    `<option value="${f.id}" ${f.id === currentFamilyId ? 'selected' : ''}>${f.name}${f.role === 'admin' ? ' (管理员)' : ''}</option>`
+  ).join('');
+}
+
+async function switchFamily(famId) {
+  try {
+    const r = await authFetch('/api/auth/switch-family', { method: 'POST', body: JSON.stringify({ familyId: famId }) });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error);
+    authToken = d.token;
+    currentFamilyId = d.currentFamilyId;
+    localStorage.setItem('auth_token', authToken);
+    localStorage.setItem('current_family_id', currentFamilyId);
+    location.reload();
+  } catch (e) { showToast('切换失败'); }
+}
+
+function logout() {
+  authToken = null;
+  authUser = null;
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('current_family_id');
+  location.reload();
+}
+
+async function showFamilySettings() {
+  if (!currentFamilyId) return;
+  try {
+    const r = await authFetch(`/api/families/${currentFamilyId}/members`);
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error);
+    const members = d.members || [];
+    const isAdmin = authFamilies.find((f) => f.id === currentFamilyId)?.role === 'admin';
+    let html = '<h3 style="margin:0 0 12px">家庭成员</h3>';
+    html += members.map((m) => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px;background:var(--bg);border-radius:6px">
+      <span style="flex:1">${m.name || m.email} <span style="font-size:11px;color:var(--subtext)">${m.role === 'admin' ? '管理员' : '成员'}</span></span>
+      ${isAdmin && m.id !== authUser?.id ? `<button class="source-add-btn" style="font-size:11px" onclick="removeFamilyMember('${m.id}')">移除</button>` : ''}
+    </div>`).join('');
+    if (isAdmin) {
+      html += `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+        <button class="source-add-btn" onclick="createInvite()">生成邀请码</button>
+        <div id="invite-code-display" style="margin-top:8px;font-family:monospace;font-size:16px;color:var(--accent)"></div>
+      </div>`;
+    }
+    // Quick modal
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `<div style="background:var(--bg-card);padding:20px;border-radius:12px;max-width:360px;width:90%;max-height:80vh;overflow-y:auto">${html}<button style="margin-top:12px;width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);cursor:pointer" onclick="this.closest('div[style*=fixed]').remove()">关闭</button></div>`;
+    document.body.appendChild(modal);
+  } catch (e) { showToast('加载失败'); }
+}
+
+async function removeFamilyMember(userId) {
+  if (!confirm('确定移除该成员？')) return;
+  try {
+    const r = await authFetch(`/api/families/${currentFamilyId}/members/${userId}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error);
+    showToast('已移除');
+    document.querySelector('div[style*="fixed"][style*="z-index:10000"]')?.remove();
+    showFamilySettings();
+  } catch (e) { showToast('操作失败'); }
+}
+
+async function createInvite() {
+  try {
+    const r = await authFetch(`/api/families/${currentFamilyId}/invites`, { method: 'POST', body: '{}' });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error);
+    const el = document.getElementById('invite-code-display');
+    if (el) el.textContent = `邀请码：${d.invite.code}`;
+  } catch (e) { showToast('生成失败'); }
+}
+
+/* ─── App init wrapper ────────────────────────────────────────────────────── */
+/* ─── Template management ─────────────────────────────────────────────────── */
+
+async function loadTemplates() {
+  const el = document.getElementById('templates-list');
+  if (!el) return;
+  try {
+    const r = await authFetch('/api/templates');
+    const d = await r.json();
+    if (!r.ok) return;
+    const templates = d.templates || [];
+    el.innerHTML = templates.map((t) => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px;margin-bottom:4px;border-radius:6px;background:var(--bg)">
+        <span style="font-size:18px">${t.icon || '📋'}</span>
+        <span style="flex:1;font-size:13px"><strong>${t.label}</strong> <code style="font-size:11px;color:var(--subtext)">${t.type_key}</code></span>
+        ${t.builtin ? '<span style="font-size:10px;color:var(--subtext);background:var(--bg-card);padding:2px 6px;border-radius:4px">内置</span>' : ''}
+        ${!t.builtin ? `<button class="source-add-btn" style="font-size:11px" onclick="deleteCustomTemplate('${t.type_key}')">删除</button>` : ''}
+        <button class="source-add-btn" style="font-size:11px" onclick="cloneTemplateUI('${t.type_key}','${t.label}')">克隆</button>
+      </div>
+    `).join('');
+  } catch {}
+}
+
+async function createCustomTemplate() {
+  const key = document.getElementById('tpl-new-key')?.value?.trim();
+  const icon = document.getElementById('tpl-new-icon')?.value?.trim() || '📋';
+  const label = document.getElementById('tpl-new-label')?.value?.trim();
+  const propsRaw = document.getElementById('tpl-new-props')?.value?.trim() || '';
+  if (!key || !label) return showToast('请填写 type_key 和名称');
+  if (!/^[a-z][a-z0-9_]{1,48}$/.test(key)) return showToast('type_key 须为小写字母/数字/下划线');
+
+  const props = propsRaw.split('\n').filter(Boolean).map((line, i) => {
+    const parts = line.trim().split(/\s+/);
+    return { prop_name: parts[0], label: parts[1] || parts[0], data_type: parts[2] || 'text', sort_order: i + 1 };
+  });
+
+  try {
+    const r = await authFetch('/api/templates', {
+      method: 'POST',
+      body: JSON.stringify({ type_key: key, label, icon, props }),
+    });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error || '创建失败');
+    showToast('模板已创建');
+    document.getElementById('tpl-new-key').value = '';
+    document.getElementById('tpl-new-label').value = '';
+    document.getElementById('tpl-new-icon').value = '';
+    document.getElementById('tpl-new-props').value = '';
+    loadTemplates();
+  } catch (e) { showToast(e.message || '网络错误'); }
+}
+
+async function deleteCustomTemplate(typeKey) {
+  if (!confirm(`确定删除模板 "${typeKey}"？相关数据将被归档。`)) return;
+  try {
+    const r = await authFetch(`/api/templates/${typeKey}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error || '删除失败');
+    showToast('已删除');
+    loadTemplates();
+  } catch (e) { showToast(e.message || '网络错误'); }
+}
+
+async function cloneTemplateUI(sourceKey, sourceLabel) {
+  const newKey = prompt(`从「${sourceLabel}」克隆，请输入新模板的 type_key：`);
+  if (!newKey) return;
+  const newLabel = prompt('新模板名称：', sourceLabel + '（副本）');
+  if (!newLabel) return;
+  try {
+    const r = await authFetch(`/api/templates/${sourceKey}/clone`, {
+      method: 'POST',
+      body: JSON.stringify({ new_type_key: newKey, label: newLabel }),
+    });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error || '克隆失败');
+    showToast('克隆成功');
+    loadTemplates();
+  } catch (e) { showToast(e.message || '网络错误'); }
+}
+
+function startApp() {
+  // Existing initialization logic will be called from here
+  if (typeof loadInitialData === 'function') loadInitialData();
+}
+
 const CATEGORIES = {};
 const LOCATIONS = {};
 let CATEGORY_STATS = {};
@@ -1626,6 +1989,55 @@ let currentFilter = 'all';
 let scanner = null;
 let mealDiaryData = null;
 let familyPrefs = null;
+
+/* ─── SSE streaming fetch utility ─────────────────────────────────────────── */
+async function fetchWithStreaming(url, body, onChunk, signal) {
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+    body: JSON.stringify(body),
+    signal,
+  });
+  const ct = resp.headers.get('content-type') || '';
+  if (!ct.includes('text/event-stream')) {
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    return data;
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let finalResult = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop();
+    for (const part of parts) {
+      for (const line of part.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        let evt;
+        try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+        if (evt.chunk && onChunk) onChunk(evt.chunk);
+        if (evt.error) throw new Error(evt.error);
+        if (evt.result) finalResult = evt.result;
+      }
+    }
+  }
+  if (buf.trim()) {
+    for (const line of buf.split('\n')) {
+      if (!line.startsWith('data: ')) continue;
+      let evt;
+      try { evt = JSON.parse(line.slice(6)); } catch { continue; }
+      if (evt.chunk && onChunk) onChunk(evt.chunk);
+      if (evt.error) throw new Error(evt.error);
+      if (evt.result) finalResult = evt.result;
+    }
+  }
+  if (!finalResult) throw new Error('流式响应未返回最终结果');
+  return finalResult;
+}
 let cachedLlmSubtitle = '';
 let cachedLlmKey = '';
 
@@ -1667,6 +2079,7 @@ function applyLlmCliPreset(preset) {
   if (!cmdEl || !argsEl) return;
   const map = {
     claude: { command: 'claude', args: '["-p","<<<PROMPT>>>"]' },
+    openclaw: { command: 'openclaw', args: '["run","--prompt","<<<PROMPT>>>"]' },
     gemini: { command: 'gemini', args: '["-p","<<<PROMPT>>>"]' },
     codex: { command: 'codex', args: '["-p","<<<PROMPT>>>"]' },
   };
@@ -2298,7 +2711,7 @@ function renderCookingLlmRecos() {
       return `<div style="margin-top:10px;padding:10px;border-radius:8px;border:0.5px solid var(--border)">
         <div style="font-weight:600;margin-bottom:6px">${escapeHtml(d.name)}</div>
         <div style="font-size:12px;color:var(--subtext);margin-bottom:6px">用料：${ing}</div>
-        <details style="font-size:13px">
+        <details style="font-size:13px" id="llm-expand-steps-${idx}">
           <summary style="cursor:pointer;user-select:none;color:var(--accent)">做法</summary>
           <div style="margin-top:8px;line-height:1.5;font-size:13px;white-space:pre-wrap">${stepsHtml || '<span style="color:var(--subtext)">（无）</span>'}</div>
         </details>
@@ -2322,23 +2735,29 @@ async function fetchCookingLlmRecommendations() {
     btn.disabled = true;
     btn.textContent = '生成中…';
   }
+  const recosEl = document.getElementById('cook-llm-recos');
+  if (recosEl) recosEl.innerHTML = '<div class="llm-stream-progress" id="llm-stream-text">等待模型响应…</div>';
+  const ac = new AbortController();
   try {
-    const r = await fetch('/api/cooking/llm-recommendations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ count: 5, hint: hint.trim() }),
-    });
-    const d = await r.json();
-    if (!r.ok) {
-      showToast(d.error || '生成失败');
-      return;
-    }
+    const d = await fetchWithStreaming(
+      '/api/cooking/llm-recommendations',
+      { count: 5, hint: hint.trim() },
+      (chunk) => {
+        const el = document.getElementById('llm-stream-text');
+        if (el) {
+          if (el.textContent === '等待模型响应…') el.textContent = '';
+          el.textContent += chunk;
+          el.scrollTop = el.scrollHeight;
+        }
+      },
+      ac.signal,
+    );
     cookingLlmItems = Array.isArray(d.dishes) ? d.dishes : [];
     renderCookingLlmRecos();
     if (!cookingLlmItems.length) showToast('未返回菜谱');
     else showToast(`已生成 ${cookingLlmItems.length} 道菜`);
   } catch (e) {
-    showToast(e.message || '网络错误');
+    if (e.name !== 'AbortError') showToast(e.message || '网络错误');
   } finally {
     if (btn) {
       btn.disabled = !familyPrefs.llm_cooking_ready;
@@ -2351,21 +2770,21 @@ async function expandCookingLlmSteps(idx) {
   const d = cookingLlmItems[idx];
   if (!d || !familyPrefs || !familyPrefs.llm_cooking_ready) return;
   showToast('正在展开做法…');
+  const stepsEl = document.getElementById('llm-expand-steps-' + idx);
+  if (stepsEl) stepsEl.innerHTML = '<div class="llm-stream-progress" id="llm-expand-stream-' + idx + '">等待模型响应…</div>';
   try {
-    const r = await fetch('/api/cooking/llm-expand-steps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: d.name,
-        ingredients: d.ingredients || [],
-        steps_brief: d.steps || '',
-      }),
-    });
-    const out = await r.json();
-    if (!r.ok) {
-      showToast(out.error || '失败');
-      return;
-    }
+    const out = await fetchWithStreaming(
+      '/api/cooking/llm-expand-steps',
+      { name: d.name, ingredients: d.ingredients || [], steps_brief: d.steps || '' },
+      (chunk) => {
+        const el = document.getElementById('llm-expand-stream-' + idx);
+        if (el) {
+          if (el.textContent === '等待模型响应…') el.textContent = '';
+          el.textContent += chunk;
+          el.scrollTop = el.scrollHeight;
+        }
+      },
+    );
     cookingLlmItems[idx] = { ...d, steps: out.steps || d.steps };
     renderCookingLlmRecos();
     showToast('已更新做法');
@@ -2732,6 +3151,7 @@ function closeTimelineModal(event) {
 
 async function loadSettingsUI() {
   await loadFamilyPrefs();
+  loadTemplates();
   const list = document.getElementById('settings-babies-list');
   if (list) {
     const babies = (familyPrefs && familyPrefs.family && familyPrefs.family.babies) || [];
@@ -5381,8 +5801,9 @@ async function uploadBtcpFile(file) {
   setTimeout(() => { progress.style.display = 'none'; }, 5000);
 }
 
-// ─── 启动 ─────────────────────────────────────────────────────────────────────
-init();
+// ─── 启动（先验证 auth，再加载数据）────────────────────────────────────────────
+function loadInitialData() { init(); }
+initAuth();
 </script>
 
 </body>
