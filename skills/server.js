@@ -27,6 +27,8 @@ const {
   extractCompletionText,
   escapeForJsonStringContent,
 } = require("./lib/llm-completion");
+const { getDb, eav, prefs: dbPrefs, users: dbUsers, families: dbFamilies, invites: dbInvites } = require("./lib/db");
+const { requireAuth, optionalAuth, requireAdmin, googleAuth, appleAuth, signToken } = require("./lib/auth");
 
 // ─── Shared data layer ──────────────────────────────────────────────────────
 const { PATHS, readJSON, writeJSON, today, formatLocalDate, daysUntil, generateId } = require("./lib/data");
@@ -90,6 +92,191 @@ const upload = multer({
 });
 
 app.use(express.json());
+
+// ─── SQLite DB + Auth ────────────────────────────────────────────────────────
+const db = getDb();
+const auth = requireAuth(db);
+const authOpt = optionalAuth(db);
+const adminOnly = requireAdmin(db);
+
+// ─── Auth routes (public, no auth required) ──────────────────────────────────
+
+app.get("/api/auth/providers", (_req, res) => {
+  res.json({
+    google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+    apple: !!(process.env.APPLE_CLIENT_ID && process.env.APPLE_TEAM_ID),
+    dev: process.env.AUTH_DISABLED === "1",
+  });
+});
+
+app.post("/api/auth/google", async (req, res) => {
+  try {
+    const result = await googleAuth(db, req.body || {});
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Google 登录失败" });
+  }
+});
+
+app.post("/api/auth/apple", async (req, res) => {
+  try {
+    const result = await appleAuth(db, req.body || {});
+    if (!result.ok) return res.status(400).json({ error: result.error });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message || "Apple 登录失败" });
+  }
+});
+
+// Dev login (only when AUTH_DISABLED=1)
+app.post("/api/auth/dev", (req, res) => {
+  if (process.env.AUTH_DISABLED !== "1") return res.status(403).json({ error: "开发模式未启用" });
+  const user = dbUsers.findByProviderSub(db, "dev", "local") ||
+    dbUsers.upsertFromOAuth(db, { provider: "dev", sub: "local", email: "dev@localhost", name: "本地用户", avatarUrl: "" });
+  let fams = dbUsers.getFamilies(db, user.id);
+  if (!fams.length) {
+    dbFamilies.create(db, "我的家庭", user.id);
+    fams = dbUsers.getFamilies(db, user.id);
+  }
+  const familyId = fams[0].id;
+  const token = signToken({ userId: user.id, familyId });
+  res.json({ ok: true, token, user: { id: user.id, email: user.email, name: user.name }, families: fams, currentFamilyId: familyId });
+});
+
+app.get("/api/auth/me", auth, (req, res) => {
+  const fams = dbUsers.getFamilies(db, req.userId);
+  res.json({
+    user: { id: req.user.id, email: req.user.email, name: req.user.name, avatar_url: req.user.avatar_url },
+    families: fams.map((f) => ({ id: f.id, name: f.name, role: f.role })),
+    currentFamilyId: req.familyId,
+  });
+});
+
+// Switch active family
+app.post("/api/auth/switch-family", auth, (req, res) => {
+  const { familyId } = req.body || {};
+  if (!familyId) return res.status(400).json({ error: "familyId 必填" });
+  if (!dbFamilies.isMember(db, familyId, req.userId)) return res.status(403).json({ error: "你不是该家庭成员" });
+  const token = signToken({ userId: req.userId, familyId });
+  res.json({ ok: true, token, currentFamilyId: familyId });
+});
+
+// ─── Family management (auth required) ──────────────────────────────────────
+
+app.post("/api/families", auth, (req, res) => {
+  const name = String(req.body?.name || "").trim() || "新家庭";
+  const fam = dbFamilies.create(db, name, req.userId);
+  const token = signToken({ userId: req.userId, familyId: fam.id });
+  res.json({ ok: true, family: fam, token });
+});
+
+app.get("/api/families/:id/members", auth, (req, res) => {
+  if (!dbFamilies.isMember(db, req.params.id, req.userId)) return res.status(403).json({ error: "无权限" });
+  res.json({ members: dbFamilies.getMembers(db, req.params.id) });
+});
+
+app.delete("/api/families/:id/members/:userId", auth, adminOnly, (req, res) => {
+  const famId = req.params.id;
+  const targetId = req.params.userId;
+  if (targetId === req.userId) return res.status(400).json({ error: "不能移除自己" });
+  dbFamilies.removeMember(db, famId, targetId);
+  res.json({ ok: true });
+});
+
+app.patch("/api/families/:id/members/:userId/role", auth, adminOnly, (req, res) => {
+  const role = req.body?.role;
+  if (!["admin", "member"].includes(role)) return res.status(400).json({ error: "角色无效" });
+  dbFamilies.setRole(db, req.params.id, req.params.userId, role);
+  res.json({ ok: true });
+});
+
+// ─── Invites ─────────────────────────────────────────────────────────────────
+
+app.post("/api/families/:id/invites", auth, adminOnly, (req, res) => {
+  const inv = dbInvites.create(db, req.params.id, req.userId, req.body || {});
+  res.json({ ok: true, invite: inv });
+});
+
+app.post("/api/invites/redeem", auth, (req, res) => {
+  const code = String(req.body?.code || "").trim().toUpperCase();
+  if (!code) return res.status(400).json({ error: "邀请码必填" });
+  const result = dbInvites.redeem(db, code, req.userId);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  const token = signToken({ userId: req.userId, familyId: result.familyId });
+  res.json({ ok: true, familyId: result.familyId, token });
+});
+
+// ─── EAV generic endpoints (Notion-like database API) ────────────────────────
+
+app.get("/api/eav/:entityType/schema", auth, (req, res) => {
+  res.json({ props: eav.getPropDefs(db, req.params.entityType) });
+});
+
+app.post("/api/eav/:entityType/schema", auth, adminOnly, (req, res) => {
+  const { prop_name, data_type, label, sort_order, config } = req.body || {};
+  if (!prop_name) return res.status(400).json({ error: "prop_name 必填" });
+  eav.upsertPropDef(db, req.params.entityType, prop_name, { data_type, label, sort_order, config });
+  res.json({ ok: true });
+});
+
+app.get("/api/eav/:entityType", auth, (req, res) => {
+  const where = {};
+  for (const [k, v] of Object.entries(req.query)) {
+    if (k.startsWith("_")) continue;
+    where[k] = v;
+  }
+  const entities = eav.listEntities(db, req.familyId, req.params.entityType, {
+    where: Object.keys(where).length ? where : undefined,
+    orderBy: req.query._sort,
+    desc: req.query._desc === "1",
+    limit: parseInt(req.query._limit) || undefined,
+  });
+  res.json({ items: entities, total: entities.length });
+});
+
+app.get("/api/eav/:entityType/:id", auth, (req, res) => {
+  const ent = eav.getEntity(db, req.params.id);
+  if (!ent || ent._family_id !== req.familyId) return res.status(404).json({ error: "未找到" });
+  res.json(ent);
+});
+
+app.post("/api/eav/:entityType", auth, (req, res) => {
+  const crypto = require("crypto");
+  const id = req.body?.id || `${req.params.entityType.replace(/_/g, "")}_${Date.now().toString(36)}_${crypto.randomBytes(3).toString("hex")}`;
+  const props = { ...req.body };
+  delete props.id;
+  eav.upsertEntity(db, req.familyId, req.params.entityType, id, props, req.userId);
+  res.json({ ok: true, id, entity: eav.getEntity(db, id) });
+});
+
+app.patch("/api/eav/:entityType/:id", auth, (req, res) => {
+  const ent = eav.getEntity(db, req.params.id);
+  if (!ent || ent._family_id !== req.familyId) return res.status(404).json({ error: "未找到" });
+  eav.patchEntity(db, req.params.id, req.body || {});
+  res.json({ ok: true, entity: eav.getEntity(db, req.params.id) });
+});
+
+app.delete("/api/eav/:entityType/:id", auth, (req, res) => {
+  const ent = eav.getEntity(db, req.params.id);
+  if (!ent || ent._family_id !== req.familyId) return res.status(404).json({ error: "未找到" });
+  eav.archiveEntity(db, req.params.id);
+  res.json({ ok: true });
+});
+
+// ─── Preferences (family-scoped) via DB ──────────────────────────────────────
+
+app.get("/api/v2/preferences", auth, (req, res) => {
+  res.json(dbPrefs.getAll(db, req.familyId));
+});
+
+app.patch("/api/v2/preferences", auth, (req, res) => {
+  const pairs = Object.entries(req.body || {});
+  if (!pairs.length) return res.status(400).json({ error: "空请求体" });
+  dbPrefs.setMany(db, req.familyId, pairs);
+  res.json({ ok: true, preferences: dbPrefs.getAll(db, req.familyId) });
+});
+
 // 静态资源放在所有 /api 路由之后注册，避免与接口路径冲突
 
 // ─── Utility functions imported from lib/data.js & lib/inventory-ops.js ────

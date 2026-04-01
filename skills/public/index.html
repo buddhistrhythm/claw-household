@@ -720,6 +720,46 @@
 </head>
 <body>
 
+<!-- ═══ Login overlay ═══════════════════════════════════════════════════════ -->
+<div id="login-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column">
+  <div style="text-align:center;max-width:320px;padding:24px">
+    <div style="font-size:48px;margin-bottom:16px">🏠</div>
+    <h1 style="margin:0 0 8px;font-size:22px">家用AI</h1>
+    <p style="color:var(--subtext);font-size:14px;margin:0 0 24px">家庭智能管理系统</p>
+    <div id="login-buttons" style="display:flex;flex-direction:column;gap:12px">
+      <button id="login-google-btn" type="button" style="display:none;padding:12px 20px;border-radius:8px;border:1px solid var(--border);background:white;color:#333;font-size:15px;cursor:pointer;font-weight:500" onclick="loginWithGoogle()">
+        <svg viewBox="0 0 24 24" width="18" height="18" style="vertical-align:middle;margin-right:8px"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        使用 Google 登录
+      </button>
+      <button id="login-apple-btn" type="button" style="display:none;padding:12px 20px;border-radius:8px;border:1px solid var(--border);background:#000;color:#fff;font-size:15px;cursor:pointer;font-weight:500" onclick="loginWithApple()">
+        <svg viewBox="0 0 24 24" width="18" height="18" style="vertical-align:middle;margin-right:8px" fill="white"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+        使用 Apple 登录
+      </button>
+      <button id="login-dev-btn" type="button" style="display:none;padding:12px 20px;border-radius:8px;border:1px dashed var(--border);background:var(--bg-card);color:var(--text);font-size:14px;cursor:pointer" onclick="loginDev()">
+        本地开发模式（无需登录）
+      </button>
+    </div>
+    <div id="login-error" style="color:#e53e3e;font-size:13px;margin-top:12px;display:none"></div>
+    <!-- Family invite code -->
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid var(--border)">
+      <p style="font-size:12px;color:var(--subtext);margin:0 0 8px">已有邀请码？</p>
+      <div style="display:flex;gap:8px">
+        <input id="invite-code-input" type="text" placeholder="输入邀请码" class="form-input" style="flex:1;text-transform:uppercase">
+        <button type="button" class="source-add-btn" onclick="redeemInviteFromLogin()">加入</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Family switcher bar (shown when logged in with multiple families) ══ -->
+<div id="family-bar" style="display:none;background:var(--bg-card);border-bottom:1px solid var(--border);padding:6px 16px;font-size:13px;display:flex;align-items:center;gap:8px">
+  <span style="color:var(--subtext)">家庭：</span>
+  <select id="family-select" class="form-input" style="flex:1;max-width:200px;padding:4px 8px;font-size:13px" onchange="switchFamily(this.value)"></select>
+  <button type="button" style="font-size:12px;color:var(--accent);background:none;border:none;cursor:pointer" onclick="showFamilySettings()">管理</button>
+  <span style="flex:1"></span>
+  <button type="button" style="font-size:12px;color:var(--subtext);background:none;border:none;cursor:pointer" onclick="logout()">退出</button>
+</div>
+
 <div class="header">
   <div>
     <h1>🏠 家用AI</h1>
@@ -1627,6 +1667,216 @@
 </div>
 
 <script>
+/* ─── Auth state ──────────────────────────────────────────────────────────── */
+let authToken = localStorage.getItem('auth_token') || null;
+let authUser = null;
+let authFamilies = [];
+let currentFamilyId = localStorage.getItem('current_family_id') || null;
+
+function authHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+  return h;
+}
+
+function authFetch(url, opts = {}) {
+  if (!opts.headers) opts.headers = {};
+  if (authToken) opts.headers['Authorization'] = `Bearer ${authToken}`;
+  if (!opts.headers['Content-Type'] && opts.body) opts.headers['Content-Type'] = 'application/json';
+  return fetch(url, opts);
+}
+
+async function initAuth() {
+  const overlay = document.getElementById('login-overlay');
+  // Check available providers
+  try {
+    const r = await fetch('/api/auth/providers');
+    const p = await r.json();
+    if (p.google) document.getElementById('login-google-btn').style.display = 'block';
+    if (p.apple) document.getElementById('login-apple-btn').style.display = 'block';
+    if (p.dev) document.getElementById('login-dev-btn').style.display = 'block';
+
+    // If dev mode and no token, auto-login
+    if (p.dev && !authToken) {
+      await loginDev();
+      return;
+    }
+  } catch {}
+
+  if (!authToken) {
+    overlay.style.display = 'flex';
+    return;
+  }
+
+  // Validate token
+  try {
+    const r = await authFetch('/api/auth/me');
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    authUser = d.user;
+    authFamilies = d.families || [];
+    currentFamilyId = d.currentFamilyId || currentFamilyId;
+    localStorage.setItem('current_family_id', currentFamilyId || '');
+    overlay.style.display = 'none';
+    renderFamilyBar();
+    startApp();
+  } catch {
+    authToken = null;
+    localStorage.removeItem('auth_token');
+    overlay.style.display = 'flex';
+  }
+}
+
+function handleAuthResult(d) {
+  authToken = d.token;
+  authUser = d.user;
+  authFamilies = d.families || [];
+  currentFamilyId = d.currentFamilyId || (d.families?.[0]?.id);
+  localStorage.setItem('auth_token', authToken);
+  localStorage.setItem('current_family_id', currentFamilyId || '');
+  document.getElementById('login-overlay').style.display = 'none';
+  renderFamilyBar();
+  startApp();
+}
+
+async function loginDev() {
+  try {
+    const r = await fetch('/api/auth/dev', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    handleAuthResult(d);
+  } catch (e) {
+    const el = document.getElementById('login-error');
+    if (el) { el.textContent = e.message; el.style.display = 'block'; }
+  }
+}
+
+function loginWithGoogle() {
+  const clientId = prompt('请输入 Google Client ID（或在 .env 配置 GOOGLE_CLIENT_ID）：');
+  if (!clientId) return;
+  const redirect = window.location.origin + '/api/auth/google/callback';
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=openid%20email%20profile&access_type=offline`;
+  window.location.href = url;
+}
+
+function loginWithApple() {
+  const clientId = prompt('请输入 Apple Client ID（或在 .env 配置 APPLE_CLIENT_ID）：');
+  if (!clientId) return;
+  const redirect = window.location.origin + '/api/auth/apple/callback';
+  const url = `https://appleid.apple.com/auth/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=name%20email&response_mode=form_post`;
+  window.location.href = url;
+}
+
+async function redeemInviteFromLogin() {
+  const code = document.getElementById('invite-code-input')?.value?.trim();
+  if (!code) return showToast('请输入邀请码');
+  if (!authToken) return showToast('请先登录');
+  try {
+    const r = await authFetch('/api/invites/redeem', { method: 'POST', body: JSON.stringify({ code }) });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error || '兑换失败');
+    authToken = d.token;
+    currentFamilyId = d.familyId;
+    localStorage.setItem('auth_token', authToken);
+    localStorage.setItem('current_family_id', currentFamilyId);
+    showToast('已成功加入家庭！');
+    location.reload();
+  } catch (e) {
+    showToast(e.message || '网络错误');
+  }
+}
+
+function renderFamilyBar() {
+  const bar = document.getElementById('family-bar');
+  const sel = document.getElementById('family-select');
+  if (!bar || !sel) return;
+  if (authFamilies.length <= 1 && !(authUser && authUser.name)) {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = 'flex';
+  sel.innerHTML = authFamilies.map((f) =>
+    `<option value="${f.id}" ${f.id === currentFamilyId ? 'selected' : ''}>${f.name}${f.role === 'admin' ? ' (管理员)' : ''}</option>`
+  ).join('');
+}
+
+async function switchFamily(famId) {
+  try {
+    const r = await authFetch('/api/auth/switch-family', { method: 'POST', body: JSON.stringify({ familyId: famId }) });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error);
+    authToken = d.token;
+    currentFamilyId = d.currentFamilyId;
+    localStorage.setItem('auth_token', authToken);
+    localStorage.setItem('current_family_id', currentFamilyId);
+    location.reload();
+  } catch (e) { showToast('切换失败'); }
+}
+
+function logout() {
+  authToken = null;
+  authUser = null;
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('current_family_id');
+  location.reload();
+}
+
+async function showFamilySettings() {
+  if (!currentFamilyId) return;
+  try {
+    const r = await authFetch(`/api/families/${currentFamilyId}/members`);
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error);
+    const members = d.members || [];
+    const isAdmin = authFamilies.find((f) => f.id === currentFamilyId)?.role === 'admin';
+    let html = '<h3 style="margin:0 0 12px">家庭成员</h3>';
+    html += members.map((m) => `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px;background:var(--bg);border-radius:6px">
+      <span style="flex:1">${m.name || m.email} <span style="font-size:11px;color:var(--subtext)">${m.role === 'admin' ? '管理员' : '成员'}</span></span>
+      ${isAdmin && m.id !== authUser?.id ? `<button class="source-add-btn" style="font-size:11px" onclick="removeFamilyMember('${m.id}')">移除</button>` : ''}
+    </div>`).join('');
+    if (isAdmin) {
+      html += `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+        <button class="source-add-btn" onclick="createInvite()">生成邀请码</button>
+        <div id="invite-code-display" style="margin-top:8px;font-family:monospace;font-size:16px;color:var(--accent)"></div>
+      </div>`;
+    }
+    // Quick modal
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `<div style="background:var(--bg-card);padding:20px;border-radius:12px;max-width:360px;width:90%;max-height:80vh;overflow-y:auto">${html}<button style="margin-top:12px;width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);cursor:pointer" onclick="this.closest('div[style*=fixed]').remove()">关闭</button></div>`;
+    document.body.appendChild(modal);
+  } catch (e) { showToast('加载失败'); }
+}
+
+async function removeFamilyMember(userId) {
+  if (!confirm('确定移除该成员？')) return;
+  try {
+    const r = await authFetch(`/api/families/${currentFamilyId}/members/${userId}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error);
+    showToast('已移除');
+    document.querySelector('div[style*="fixed"][style*="z-index:10000"]')?.remove();
+    showFamilySettings();
+  } catch (e) { showToast('操作失败'); }
+}
+
+async function createInvite() {
+  try {
+    const r = await authFetch(`/api/families/${currentFamilyId}/invites`, { method: 'POST', body: '{}' });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error);
+    const el = document.getElementById('invite-code-display');
+    if (el) el.textContent = `邀请码：${d.invite.code}`;
+  } catch (e) { showToast('生成失败'); }
+}
+
+/* ─── App init wrapper ────────────────────────────────────────────────────── */
+function startApp() {
+  // Existing initialization logic will be called from here
+  if (typeof loadInitialData === 'function') loadInitialData();
+}
+
 const CATEGORIES = {};
 const LOCATIONS = {};
 let CATEGORY_STATS = {};
@@ -5453,8 +5703,9 @@ async function uploadBtcpFile(file) {
   setTimeout(() => { progress.style.display = 'none'; }, 5000);
 }
 
-// ─── 启动 ─────────────────────────────────────────────────────────────────────
-init();
+// ─── 启动（先验证 auth，再加载数据）────────────────────────────────────────────
+function loadInitialData() { init(); }
+initAuth();
 </script>
 
 </body>

@@ -2,4 +2,7 @@ node_modules/
 uploads/
 .env
 data/*.json
+data/*.db
+data/*.db-wal
+data/*.db-shm
 .gstack/
