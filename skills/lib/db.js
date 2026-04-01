@@ -15,7 +15,7 @@
 const path = require("path");
 const Database = require("better-sqlite3");
 
-const DB_PATH = path.join(__dirname, "../../data/household.db");
+const DB_PATH = process.env.HOUSEHOLD_DB_PATH || path.join(__dirname, "../../data/household.db");
 
 let _db = null;
 

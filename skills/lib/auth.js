@@ -16,7 +16,12 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const { users, families } = require("./db");
 
-const JWT_SECRET = () => process.env.JWT_SECRET || "dev-secret-change-me-" + crypto.randomBytes(8).toString("hex");
+let _jwtSecret = null;
+function JWT_SECRET() {
+  if (_jwtSecret) return _jwtSecret;
+  _jwtSecret = process.env.JWT_SECRET || "dev-secret-" + crypto.randomBytes(16).toString("hex");
+  return _jwtSecret;
+}
 const TOKEN_EXPIRY = "30d";
 
 /* ─── JWT helpers ─────────────────────────────────────────────────────────── */
