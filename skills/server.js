@@ -207,6 +207,51 @@ app.post("/api/invites/redeem", auth, (req, res) => {
   res.json({ ok: true, familyId: result.familyId, token });
 });
 
+// ─── Entity templates (dynamic database types) ──────────────────────────────
+
+app.get("/api/templates", auth, (req, res) => {
+  res.json({ templates: eav.listTemplates(db, req.familyId) });
+});
+
+app.get("/api/templates/:typeKey", auth, (req, res) => {
+  const t = eav.getTemplate(db, req.params.typeKey, req.familyId);
+  if (!t) return res.status(404).json({ error: "模板不存在" });
+  const props = eav.getPropDefs(db, req.params.typeKey);
+  res.json({ template: t, props });
+});
+
+app.post("/api/templates", auth, adminOnly, (req, res) => {
+  const { type_key, label, icon, description, sort_order, config, props } = req.body || {};
+  if (!type_key || !/^[a-z][a-z0-9_]{1,48}$/.test(type_key)) {
+    return res.status(400).json({ error: "type_key 须为 2-50 位小写字母/数字/下划线" });
+  }
+  const result = eav.createTemplate(db, req.familyId, type_key, { label, icon, description, sort_order, config }, props || []);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true, template: eav.getTemplate(db, type_key, req.familyId) });
+});
+
+app.patch("/api/templates/:typeKey", auth, adminOnly, (req, res) => {
+  const result = eav.updateTemplate(db, req.familyId, req.params.typeKey, req.body || {});
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true, template: eav.getTemplate(db, req.params.typeKey, req.familyId) });
+});
+
+app.delete("/api/templates/:typeKey", auth, adminOnly, (req, res) => {
+  const result = eav.deleteTemplate(db, req.familyId, req.params.typeKey);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true });
+});
+
+app.post("/api/templates/:typeKey/clone", auth, adminOnly, (req, res) => {
+  const { new_type_key, label, icon, description } = req.body || {};
+  if (!new_type_key || !/^[a-z][a-z0-9_]{1,48}$/.test(new_type_key)) {
+    return res.status(400).json({ error: "new_type_key 须为 2-50 位小写字母/数字/下划线" });
+  }
+  const result = eav.cloneTemplate(db, req.familyId, req.params.typeKey, new_type_key, { label, icon, description });
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  res.json({ ok: true, template: eav.getTemplate(db, new_type_key, req.familyId) });
+});
+
 // ─── EAV generic endpoints (Notion-like database API) ────────────────────────
 
 app.get("/api/eav/:entityType/schema", auth, (req, res) => {

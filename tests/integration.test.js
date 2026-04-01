@@ -298,6 +298,126 @@ describe("SQLite EAV integration", () => {
       assert.ok(fam2Items.some((i) => i.id === "inv_bob_001"));
     });
   });
+
+  describe("dynamic templates", () => {
+    let famId;
+    before(() => {
+      const fams = dbModule.users.getFamilies(db, "usr_google_g123");
+      famId = fams[0].id;
+    });
+
+    it("lists built-in templates", () => {
+      const templates = dbModule.eav.listTemplates(db, famId);
+      assert.ok(templates.length >= 7);
+      const keys = templates.map((t) => t.type_key);
+      assert.ok(keys.includes("inventory_item"));
+      assert.ok(keys.includes("baby_event"));
+      assert.ok(keys.includes("meal_dish"));
+      assert.ok(templates.every((t) => t.builtin === 1));
+    });
+
+    it("gets a built-in template with props", () => {
+      const t = dbModule.eav.getTemplate(db, "inventory_item", famId);
+      assert.ok(t);
+      assert.equal(t.label, "库存物品");
+      assert.equal(t.icon, "📦");
+      assert.equal(t.builtin, 1);
+    });
+
+    it("creates custom template with properties", () => {
+      const result = dbModule.eav.createTemplate(db, famId, "pet", {
+        label: "宠物", icon: "🐾", description: "家庭宠物管理",
+      }, [
+        { prop_name: "name", data_type: "text", label: "名字", sort_order: 1 },
+        { prop_name: "species", data_type: "text", label: "物种", sort_order: 2, config: { options: ["dog", "cat", "fish", "bird"] } },
+        { prop_name: "breed", data_type: "text", label: "品种", sort_order: 3 },
+        { prop_name: "weight_kg", data_type: "number", label: "体重(kg)", sort_order: 4 },
+        { prop_name: "vaccinated", data_type: "boolean", label: "已接种", sort_order: 5 },
+        { prop_name: "birthday", data_type: "date", label: "生日", sort_order: 6 },
+      ]);
+      assert.ok(result.ok);
+
+      // Verify template exists
+      const t = dbModule.eav.getTemplate(db, "pet", famId);
+      assert.equal(t.label, "宠物");
+      assert.equal(t.icon, "🐾");
+      assert.equal(t.builtin, 0);
+
+      // Verify prop_defs created
+      const defs = dbModule.eav.getPropDefs(db, "pet");
+      assert.equal(defs.length, 6);
+      assert.ok(defs.find((d) => d.prop_name === "weight_kg" && d.data_type === "number"));
+    });
+
+    it("uses custom template for CRUD", () => {
+      dbModule.eav.upsertEntity(db, famId, "pet", "pet_fluffy", {
+        name: "Fluffy", species: "cat", breed: "英短", weight_kg: 4.5, vaccinated: true,
+      }, "usr_google_g123");
+      const pet = dbModule.eav.getEntity(db, "pet_fluffy");
+      assert.equal(pet.name, "Fluffy");
+      assert.equal(pet.weight_kg, 4.5);
+      assert.equal(pet.vaccinated, true);
+    });
+
+    it("lists templates including custom", () => {
+      const all = dbModule.eav.listTemplates(db, famId);
+      assert.ok(all.some((t) => t.type_key === "pet" && t.builtin === 0));
+    });
+
+    it("rejects duplicate type_key", () => {
+      const result = dbModule.eav.createTemplate(db, famId, "pet", { label: "Dup" });
+      assert.ok(!result.ok);
+    });
+
+    it("rejects collision with built-in", () => {
+      const result = dbModule.eav.createTemplate(db, famId, "inventory_item", { label: "Dup" });
+      assert.ok(!result.ok);
+    });
+
+    it("updates custom template", () => {
+      const result = dbModule.eav.updateTemplate(db, famId, "pet", { label: "家庭宠物", icon: "🐶" });
+      assert.ok(result.ok);
+      const t = dbModule.eav.getTemplate(db, "pet", famId);
+      assert.equal(t.label, "家庭宠物");
+      assert.equal(t.icon, "🐶");
+    });
+
+    it("cannot update built-in template", () => {
+      const result = dbModule.eav.updateTemplate(db, famId, "inventory_item", { label: "Hacked" });
+      assert.ok(!result.ok);
+    });
+
+    it("clones template", () => {
+      const result = dbModule.eav.cloneTemplate(db, famId, "inventory_item", "plant", {
+        label: "植物", icon: "🌱",
+      });
+      assert.ok(result.ok);
+      const defs = dbModule.eav.getPropDefs(db, "plant");
+      assert.ok(defs.length >= 20); // copied from inventory_item
+      const t = dbModule.eav.getTemplate(db, "plant", famId);
+      assert.equal(t.label, "植物");
+      assert.equal(t.builtin, 0);
+    });
+
+    it("deletes custom template (archives entities)", () => {
+      // First create an entity
+      dbModule.eav.upsertEntity(db, famId, "pet", "pet_buddy", { name: "Buddy" }, "usr_google_g123");
+      // Delete template
+      const result = dbModule.eav.deleteTemplate(db, famId, "pet");
+      assert.ok(result.ok);
+      // Template gone
+      const t = dbModule.eav.getTemplate(db, "pet", famId);
+      assert.equal(t, null);
+      // Entity archived
+      const ent = dbModule.eav.getEntity(db, "pet_buddy");
+      assert.equal(ent, null); // archived
+    });
+
+    it("cannot delete built-in template", () => {
+      const result = dbModule.eav.deleteTemplate(db, famId, "inventory_item");
+      assert.ok(!result.ok);
+    });
+  });
 });
 
 describe("Auth module", () => {

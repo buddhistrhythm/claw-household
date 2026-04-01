@@ -83,6 +83,23 @@ function migrate(db) {
 
     -- ═══ EAV core (Notion-like flexible schema) ═════════════════════════════
 
+    -- Entity type templates — registry of available "databases" (Notion analogy)
+    CREATE TABLE IF NOT EXISTS entity_templates (
+      type_key      TEXT NOT NULL,                       -- e.g. 'inventory_item'
+      family_id     TEXT,                                -- NULL = built-in preset; set = family-custom
+      label         TEXT NOT NULL DEFAULT '',
+      icon          TEXT NOT NULL DEFAULT '',             -- emoji
+      description   TEXT NOT NULL DEFAULT '',
+      builtin       INTEGER NOT NULL DEFAULT 0,          -- 1 = preset, cannot delete
+      sort_order    INTEGER NOT NULL DEFAULT 0,
+      config        TEXT DEFAULT '{}',                   -- JSON: extra settings
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (type_key, family_id)
+    );
+    -- Global built-in templates (family_id IS NULL)
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_et_builtin
+      ON entity_templates(type_key) WHERE family_id IS NULL;
+
     -- Property definitions — defines available "columns" per entity type
     CREATE TABLE IF NOT EXISTS prop_defs (
       id            TEXT PRIMARY KEY,                -- e.g. 'inventory_item.name'
@@ -129,9 +146,36 @@ function migrate(db) {
     );
   `);
 
-  // Seed default prop_defs if empty
+  // Seed built-in templates and prop_defs on first run
   const count = db.prepare("SELECT COUNT(*) as c FROM prop_defs").get().c;
-  if (count === 0) seedPropDefs(db);
+  if (count === 0) {
+    seedBuiltinTemplates(db);
+    seedPropDefs(db);
+  }
+}
+
+/* ─── Built-in templates (presets) ─────────────────────────────────────────── */
+
+const BUILTIN_TEMPLATES = [
+  { type_key: "inventory_item", label: "库存物品", icon: "📦", description: "家庭库存管理：食品、日用品、宝宝用品等", sort_order: 1 },
+  { type_key: "baby_event", label: "宝宝记录", icon: "👶", description: "喂奶、换尿布、睡眠、成长等事件", sort_order: 2 },
+  { type_key: "meal_ingredient", label: "食材", icon: "🥬", description: "食材库", sort_order: 3 },
+  { type_key: "meal_dish", label: "菜谱", icon: "🍳", description: "菜品与做法", sort_order: 4 },
+  { type_key: "meal_record", label: "用餐记录", icon: "🍽️", description: "每日三餐记录", sort_order: 5 },
+  { type_key: "consumption_record", label: "消耗记录", icon: "📉", description: "库存消耗历史", sort_order: 6 },
+  { type_key: "vehicle", label: "车辆", icon: "🚗", description: "车辆信息与保养计划", sort_order: 7 },
+];
+
+function seedBuiltinTemplates(db) {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO entity_templates(type_key, family_id, label, icon, description, builtin, sort_order)
+    VALUES(?, NULL, ?, ?, ?, 1, ?)
+  `);
+  db.transaction(() => {
+    for (const t of BUILTIN_TEMPLATES) {
+      stmt.run(t.type_key, t.label, t.icon, t.description, t.sort_order);
+    }
+  })();
 }
 
 /* ─── Seed property definitions ───────────────────────────────────────────── */
@@ -418,6 +462,128 @@ const eav = {
         config = excluded.config
     `).run(id, entityType, propName, opts.data_type || "text", opts.label || propName, opts.sort_order || 0, JSON.stringify(opts.config || {}));
   },
+
+  /* ─── Template management ─────────────────────────────────────────────── */
+
+  /**
+   * List all available templates for a family (built-in + family-custom).
+   */
+  listTemplates(db, familyId) {
+    return db.prepare(`
+      SELECT * FROM entity_templates
+      WHERE family_id IS NULL OR family_id = ?
+      ORDER BY builtin DESC, sort_order, created_at
+    `).all(familyId);
+  },
+
+  /**
+   * Get a single template by type_key (checks built-in first, then family).
+   */
+  getTemplate(db, typeKey, familyId) {
+    return db.prepare(`
+      SELECT * FROM entity_templates
+      WHERE type_key = ? AND (family_id IS NULL OR family_id = ?)
+      ORDER BY family_id IS NULL DESC
+      LIMIT 1
+    `).get(typeKey, familyId) || null;
+  },
+
+  /**
+   * Create a new custom template for a family.
+   * @param {object} opts - { label, icon, description, sort_order, config }
+   * @param {Array} [propDefs] - property definitions to create: [{ prop_name, data_type, label, sort_order, config }]
+   */
+  createTemplate(db, familyId, typeKey, opts = {}, propDefs = []) {
+    // Validate: no collision with built-in
+    const existing = db.prepare("SELECT 1 FROM entity_templates WHERE type_key = ? AND family_id IS NULL").get(typeKey);
+    if (existing) return { ok: false, error: `"${typeKey}" 与内置模板冲突` };
+    // Validate: no duplicate for this family
+    const dup = db.prepare("SELECT 1 FROM entity_templates WHERE type_key = ? AND family_id = ?").get(typeKey, familyId);
+    if (dup) return { ok: false, error: `模板 "${typeKey}" 已存在` };
+
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO entity_templates(type_key, family_id, label, icon, description, builtin, sort_order, config)
+        VALUES(?, ?, ?, ?, ?, 0, ?, ?)
+      `).run(
+        typeKey, familyId,
+        opts.label || typeKey, opts.icon || "📋", opts.description || "",
+        opts.sort_order || 100, JSON.stringify(opts.config || {})
+      );
+
+      // Create prop_defs for this template
+      if (propDefs.length) {
+        const insertProp = db.prepare(
+          "INSERT OR IGNORE INTO prop_defs(id, entity_type, prop_name, data_type, label, sort_order, config) VALUES(?,?,?,?,?,?,?)"
+        );
+        for (const p of propDefs) {
+          insertProp.run(
+            `${typeKey}.${p.prop_name}`, typeKey, p.prop_name,
+            p.data_type || "text", p.label || p.prop_name,
+            p.sort_order || 0, JSON.stringify(p.config || {})
+          );
+        }
+      }
+    })();
+
+    return { ok: true };
+  },
+
+  /**
+   * Update a custom template's metadata.
+   */
+  updateTemplate(db, familyId, typeKey, patch) {
+    const t = db.prepare("SELECT * FROM entity_templates WHERE type_key = ? AND family_id = ?").get(typeKey, familyId);
+    if (!t) return { ok: false, error: "模板不存在或不可修改" };
+    if (t.builtin) return { ok: false, error: "内置模板不可修改" };
+    const sets = [];
+    const params = [];
+    for (const key of ["label", "icon", "description", "sort_order"]) {
+      if (patch[key] !== undefined) { sets.push(`${key} = ?`); params.push(key === "sort_order" ? Number(patch[key]) : String(patch[key])); }
+    }
+    if (patch.config !== undefined) { sets.push("config = ?"); params.push(JSON.stringify(patch.config)); }
+    if (!sets.length) return { ok: false, error: "无更新字段" };
+    params.push(typeKey, familyId);
+    db.prepare(`UPDATE entity_templates SET ${sets.join(", ")} WHERE type_key = ? AND family_id = ?`).run(...params);
+    return { ok: true };
+  },
+
+  /**
+   * Delete a custom template (not built-in).
+   */
+  deleteTemplate(db, familyId, typeKey) {
+    const t = db.prepare("SELECT * FROM entity_templates WHERE type_key = ? AND family_id = ?").get(typeKey, familyId);
+    if (!t) return { ok: false, error: "模板不存在" };
+    if (t.builtin) return { ok: false, error: "内置模板不可删除" };
+    db.transaction(() => {
+      // Remove template, prop_defs, and archive all entities of this type in this family
+      db.prepare("DELETE FROM entity_templates WHERE type_key = ? AND family_id = ?").run(typeKey, familyId);
+      db.prepare("DELETE FROM prop_defs WHERE entity_type = ?").run(typeKey);
+      db.prepare("UPDATE entities SET archived = 1 WHERE entity_type = ? AND family_id = ?").run(typeKey, familyId);
+    })();
+    return { ok: true };
+  },
+
+  /**
+   * Clone a built-in template to create a custom variant for a family.
+   * Useful for creating a "宠物" template based on "inventory_item" structure.
+   */
+  cloneTemplate(db, familyId, sourceTypeKey, newTypeKey, opts = {}) {
+    const source = db.prepare("SELECT * FROM entity_templates WHERE type_key = ? AND (family_id IS NULL OR family_id = ?) ORDER BY family_id IS NULL DESC LIMIT 1")
+      .get(sourceTypeKey, familyId);
+    if (!source) return { ok: false, error: `源模板 "${sourceTypeKey}" 不存在` };
+    const sourceDefs = db.prepare("SELECT * FROM prop_defs WHERE entity_type = ? ORDER BY sort_order").all(sourceTypeKey);
+    const propDefs = sourceDefs.map((d) => ({
+      prop_name: d.prop_name, data_type: d.data_type, label: d.label, sort_order: d.sort_order,
+      config: JSON.parse(d.config || "{}"),
+    }));
+    return eav.createTemplate(db, familyId, newTypeKey, {
+      label: opts.label || source.label + "（副本）",
+      icon: opts.icon || source.icon,
+      description: opts.description || source.description,
+      sort_order: opts.sort_order || 100,
+    }, propDefs);
+  },
 };
 
 /* ─── EAV value encoding ──────────────────────────────────────────────────── */
@@ -600,4 +766,4 @@ const invites = {
   },
 };
 
-module.exports = { getDb, eav, prefs, users, families, invites, DB_PATH };
+module.exports = { getDb, eav, prefs, users, families, invites, BUILTIN_TEMPLATES, DB_PATH };

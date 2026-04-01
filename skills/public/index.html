@@ -1440,6 +1440,24 @@
       </div>
       <button type="button" class="big-btn btn-primary" style="margin-top:12px" onclick="saveSettingsSubtitle()">保存小标题与 LLM</button>
     </div>
+    <!-- ── 数据模板管理 ── -->
+    <div class="card">
+      <div class="card-title">数据模板（Notion 式数据库）</div>
+      <p style="font-size:12px;color:var(--subtext);margin:0 0 10px">内置模板不可删除。可新建自定义模板或从内置模板克隆扩展。</p>
+      <div id="templates-list" style="margin-bottom:12px"></div>
+      <details style="font-size:13px">
+        <summary style="cursor:pointer;color:var(--accent);user-select:none">新建自定义模板</summary>
+        <div style="margin-top:10px">
+          <div style="display:flex;gap:8px;margin-bottom:8px">
+            <input id="tpl-new-key" class="form-input" placeholder="type_key（英文小写+下划线）" style="flex:1">
+            <input id="tpl-new-icon" class="form-input" placeholder="图标" style="width:48px;text-align:center" maxlength="4">
+          </div>
+          <input id="tpl-new-label" class="form-input" placeholder="显示名称" style="margin-bottom:8px">
+          <textarea id="tpl-new-props" class="form-input" rows="4" placeholder='属性定义（每行一个）：&#10;name 名称 text&#10;quantity 数量 number&#10;done 已完成 boolean' style="margin-bottom:8px;resize:vertical;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+          <button type="button" class="source-add-btn" onclick="createCustomTemplate()">创建模板</button>
+        </div>
+      </details>
+    </div>
     <div class="card">
       <div class="card-title">说明</div>
       <p style="font-size:13px;color:var(--subtext);line-height:1.6">日历聚合：当日入库（purchase_date）、宝宝日志、餐食记录。补货来源取自物品的购买渠道。</p>
@@ -1872,6 +1890,85 @@ async function createInvite() {
 }
 
 /* ─── App init wrapper ────────────────────────────────────────────────────── */
+/* ─── Template management ─────────────────────────────────────────────────── */
+
+async function loadTemplates() {
+  const el = document.getElementById('templates-list');
+  if (!el) return;
+  try {
+    const r = await authFetch('/api/templates');
+    const d = await r.json();
+    if (!r.ok) return;
+    const templates = d.templates || [];
+    el.innerHTML = templates.map((t) => `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px;margin-bottom:4px;border-radius:6px;background:var(--bg)">
+        <span style="font-size:18px">${t.icon || '📋'}</span>
+        <span style="flex:1;font-size:13px"><strong>${t.label}</strong> <code style="font-size:11px;color:var(--subtext)">${t.type_key}</code></span>
+        ${t.builtin ? '<span style="font-size:10px;color:var(--subtext);background:var(--bg-card);padding:2px 6px;border-radius:4px">内置</span>' : ''}
+        ${!t.builtin ? `<button class="source-add-btn" style="font-size:11px" onclick="deleteCustomTemplate('${t.type_key}')">删除</button>` : ''}
+        <button class="source-add-btn" style="font-size:11px" onclick="cloneTemplateUI('${t.type_key}','${t.label}')">克隆</button>
+      </div>
+    `).join('');
+  } catch {}
+}
+
+async function createCustomTemplate() {
+  const key = document.getElementById('tpl-new-key')?.value?.trim();
+  const icon = document.getElementById('tpl-new-icon')?.value?.trim() || '📋';
+  const label = document.getElementById('tpl-new-label')?.value?.trim();
+  const propsRaw = document.getElementById('tpl-new-props')?.value?.trim() || '';
+  if (!key || !label) return showToast('请填写 type_key 和名称');
+  if (!/^[a-z][a-z0-9_]{1,48}$/.test(key)) return showToast('type_key 须为小写字母/数字/下划线');
+
+  const props = propsRaw.split('\n').filter(Boolean).map((line, i) => {
+    const parts = line.trim().split(/\s+/);
+    return { prop_name: parts[0], label: parts[1] || parts[0], data_type: parts[2] || 'text', sort_order: i + 1 };
+  });
+
+  try {
+    const r = await authFetch('/api/templates', {
+      method: 'POST',
+      body: JSON.stringify({ type_key: key, label, icon, props }),
+    });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error || '创建失败');
+    showToast('模板已创建');
+    document.getElementById('tpl-new-key').value = '';
+    document.getElementById('tpl-new-label').value = '';
+    document.getElementById('tpl-new-icon').value = '';
+    document.getElementById('tpl-new-props').value = '';
+    loadTemplates();
+  } catch (e) { showToast(e.message || '网络错误'); }
+}
+
+async function deleteCustomTemplate(typeKey) {
+  if (!confirm(`确定删除模板 "${typeKey}"？相关数据将被归档。`)) return;
+  try {
+    const r = await authFetch(`/api/templates/${typeKey}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error || '删除失败');
+    showToast('已删除');
+    loadTemplates();
+  } catch (e) { showToast(e.message || '网络错误'); }
+}
+
+async function cloneTemplateUI(sourceKey, sourceLabel) {
+  const newKey = prompt(`从「${sourceLabel}」克隆，请输入新模板的 type_key：`);
+  if (!newKey) return;
+  const newLabel = prompt('新模板名称：', sourceLabel + '（副本）');
+  if (!newLabel) return;
+  try {
+    const r = await authFetch(`/api/templates/${sourceKey}/clone`, {
+      method: 'POST',
+      body: JSON.stringify({ new_type_key: newKey, label: newLabel }),
+    });
+    const d = await r.json();
+    if (!r.ok) return showToast(d.error || '克隆失败');
+    showToast('克隆成功');
+    loadTemplates();
+  } catch (e) { showToast(e.message || '网络错误'); }
+}
+
 function startApp() {
   // Existing initialization logic will be called from here
   if (typeof loadInitialData === 'function') loadInitialData();
@@ -3054,6 +3151,7 @@ function closeTimelineModal(event) {
 
 async function loadSettingsUI() {
   await loadFamilyPrefs();
+  loadTemplates();
   const list = document.getElementById('settings-babies-list');
   if (list) {
     const babies = (familyPrefs && familyPrefs.family && familyPrefs.family.babies) || [];
