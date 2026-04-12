@@ -1,16 +1,23 @@
 ---
 name: household
-description: Household management agent — track groceries, predict restocking, plan meals, monitor baby supplies. Uses local JSON storage with MCP stdio transport for Claude Code and OpenClaw integration.
-metadata: {"openclaw":{"homepage":"https://github.com/s546126/household-agent","requires":{"bins":["node"]},"install":[{"id":"node","kind":"node","package":"household-agent","bins":["node"],"label":"Install Household Agent (npm)"}]}}
+description: "Search and manage the user's household inventory, meal planning, baby tracking, and shopping lists. Use when the user asks about groceries, expiring items, what to cook, baby supplies, or restocking."
+metadata: {"openclaw":{"homepage":"https://github.com/buddhistrhythm/claw-household","requires":{"bins":["node"]},"install":[{"id":"node","kind":"node","package":"claw-household","bins":["claw"],"label":"Install Claw Household (npm)"}]}}
 ---
 
-# Household Agent Skill
+# Claw — Household Agent Skill
 
-家庭智能管理助手 — 让 AI 帮你做家务小决策。
+家庭智能管理助手 — Claude Code companion.
+
+## Install
+
+```bash
+npx claw-household skill install   # or:
+npm install -g claw-household && claw skill install
+```
 
 ## MCP Tools (stdio)
 
-This skill exposes 12 MCP tools via stdio transport:
+12 MCP tools via stdio transport:
 
 ### Inventory
 - `inventory_list` — 查看库存（支持按位置/品类/状态筛选）
@@ -32,46 +39,36 @@ This skill exposes 12 MCP tools via stdio transport:
 - `preferences_get` — 读取偏好设置
 - `preferences_update` — 更新偏好设置
 
-## Setup
+## CLI Commands
 
 ```bash
-cd /path/to/household
-npm install
+claw status              # 库存总览
+claw list [location]     # 库存列表
+claw add <barcode|name>  # 入库
+claw consume <id|name>   # 消耗
+claw expiring [days]     # 过期预警
+claw search <keyword>    # 搜索
+claw serve               # 启动 Web 面板
 ```
 
-### Claude Code
+## Claude Code / OpenClaw Setup
 
-Add to `~/.claude/settings.json`:
+**Option 1: Skill file** (via CLI)
+```bash
+claw skill install
+```
 
+**Option 2: MCP server** (add to agent settings)
 ```json
 {
   "mcpServers": {
     "household": {
       "command": "node",
-      "args": ["/path/to/household/skills/mcp-server.js"]
+      "args": ["/path/to/claw-household/skills/mcp-server.js"]
     }
   }
 }
 ```
-
-### OpenClaw
-
-Import this skill folder via OpenClaw Skill Manager, or copy `skills/` into your OpenClaw skills directory. The MCP server runs via:
-
-```
-command: node
-args: [skills/mcp-server.js]
-```
-
-## Baby Tracker Import
-
-Supports importing baby life records from [Baby Tracker](https://nighp.com/babytracker/) app (.btcp format):
-
-```bash
-node skills/import-btcp.js <file.btcp> [--dry-run] [--tz=8]
-```
-
-Or via the web dashboard: upload `.btcp` file at `POST /api/import/btcp`.
 
 ## Natural Language Examples
 
@@ -88,4 +85,4 @@ Or via the web dashboard: upload `.btcp` file at `POST /api/import/btcp`.
 
 ## Data
 
-All data stored as local JSON files under `data/` and `config/`. No cloud, no database server, no account required.
+All data stored locally under `data/` and `config/`. No cloud, no account required (unless multi-user OAuth is configured).

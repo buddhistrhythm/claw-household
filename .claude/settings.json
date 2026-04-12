@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(data/*)",
+      "Read(config/*)",
+      "Write(data/*)",
+      "Bash(node bin/claw.js *)",
+      "Bash(node skills/inventory.js *)",
+      "Bash(npm test)"
+    ]
+  }
+}

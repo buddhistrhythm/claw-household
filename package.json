@@ -1,13 +1,48 @@
 {
-  "name": "household-agent",
+  "name": "claw-household",
   "version": "1.0.0",
-  "description": "Household Agent — 家庭智能管理（库存、餐食、宝宝、日历等）",
+  "description": "Claw — Claude Code companion for household management. Track groceries, predict restocking, plan meals, monitor baby supplies.",
   "main": "skills/server.js",
+  "bin": {
+    "claw": "bin/claw.js"
+  },
   "scripts": {
     "start": "node skills/server.js",
     "dev": "node --watch skills/server.js",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "skill:install": "node bin/claw.js skill install",
+    "skill:show": "node bin/claw.js skill show"
   },
+  "files": [
+    "bin/",
+    "skills/",
+    "config/",
+    "CLAUDE.md",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/buddhistrhythm/claw-household.git"
+  },
+  "keywords": [
+    "claude-code",
+    "household",
+    "inventory",
+    "meal-planning",
+    "baby-tracker",
+    "grocery",
+    "sqlite",
+    "eav",
+    "mcp",
+    "cli",
+    "local-first",
+    "companion"
+  ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@modelcontextprotocol/sdk": "^1.27.1",
