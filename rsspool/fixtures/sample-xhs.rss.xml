@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Shape of an RSSHub-generated 小红书 feed (e.g. /xiaohongshu/user/:id/collect) -->
+<rss version="2.0">
+  <channel>
+    <title>小红书收藏</title>
+    <link>https://www.xiaohongshu.com</link>
+    <item>
+      <title>在家复刻日式咖喱的 5 个关键</title>
+      <link>https://www.xiaohongshu.com/explore/aaa111</link>
+      <guid>https://www.xiaohongshu.com/explore/aaa111</guid>
+      <pubDate>Wed, 20 May 2026 13:00:00 GMT</pubDate>
+      <description>咖喱块只是基础，炒洋葱到焦糖色、加一勺苹果泥提鲜，最后用一点酱油收尾。</description>
+    </item>
+    <item>
+      <title>程序员的极简桌面布置</title>
+      <link>https://www.xiaohongshu.com/explore/bbb222</link>
+      <guid>https://www.xiaohongshu.com/explore/bbb222</guid>
+      <pubDate>Sun, 18 May 2026 22:10:00 GMT</pubDate>
+      <description>一块原木桌板加显示器支架加理线槽，预算 500 以内就能让工位干净很多。</description>
+    </item>
+  </channel>
+</rss>

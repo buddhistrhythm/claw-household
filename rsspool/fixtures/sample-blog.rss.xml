@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Sample Eng Blog</title>
+    <link>https://eng.example.com</link>
+    <item>
+      <title>Building agentic RAG with an MCP server</title>
+      <link>https://eng.example.com/agentic-rag</link>
+      <guid>https://eng.example.com/agentic-rag</guid>
+      <pubDate>Mon, 12 May 2026 09:00:00 GMT</pubDate>
+      <dc:creator>Jane Dev</dc:creator>
+      <description><![CDATA[<p>We wired an <b>LLM</b> agent to our docs via an MCP server and retrieval tools.</p>]]></description>
+    </item>
+    <item>
+      <title>Scaling Postgres to 1M writes per second</title>
+      <link>https://eng.example.com/postgres-scale</link>
+      <guid>https://eng.example.com/postgres-scale</guid>
+      <pubDate>Tue, 06 May 2026 12:00:00 GMT</pubDate>
+      <description>How we sharded our database and tuned the hot path.</description>
+    </item>
+    <item>
+      <title>Rewriting our proxy in Rust</title>
+      <link>https://eng.example.com/rust-proxy</link>
+      <guid>https://eng.example.com/rust-proxy</guid>
+      <pubDate>Wed, 30 Apr 2026 08:00:00 GMT</pubDate>
+      <description>The borrow checker, performance wins, and lessons learned.</description>
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,17 @@
+{
+  "rsshub": {
+    "base": "https://rsshub.app",
+    "accessKey": null
+  },
+  "feeds": [
+    { "name": "Anthropic", "source": "blog", "category": "ai", "url": "https://www.anthropic.com/rss.xml" },
+    { "name": "Netflix Tech Blog", "source": "blog", "category": "infra", "url": "https://netflixtechblog.com/feed" },
+    { "name": "Cloudflare Blog", "source": "blog", "category": "infra", "url": "https://blog.cloudflare.com/rss/" },
+
+    { "name": "Hacker News (best)", "source": "hackernews", "category": "tech", "rsshub": "/hackernews/best" },
+
+    { "name": "我的 X 点赞", "source": "x", "category": "social", "rsshub": "/twitter/likes/REPLACE_WITH_YOUR_HANDLE" },
+
+    { "name": "我的小红书收藏", "source": "xiaohongshu", "category": "life", "rsshub": "/xiaohongshu/user/REPLACE_WITH_USER_ID/collect" }
+  ]
+}

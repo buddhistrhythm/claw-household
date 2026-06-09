@@ -2,22 +2,24 @@
 'use strict';
 
 /**
- * cli.js — command-line entry point for the personal knowledge base.
+ * cli.js — command-line entry point for rsspool.
  *
- *   node src/cli.js ingest [sources...] [--limit N]
+ *   node src/cli.js ingest [--source S] [--category C] [--limit N]
+ *   node src/cli.js feeds                       # list configured feeds + resolved URLs
  *   node src/cli.js search <query> [--source S] [--limit N]
  *   node src/cli.js recent [--source S] [--tag T] [--limit N]
  *   node src/cli.js get <id>
  *   node src/cli.js stats
  *   node src/cli.js quiz [--topic T] [--count N]
  *   node src/cli.js export-notebooklm [--topic T]
- *   node src/cli.js mcp                 # start the MCP stdio server
+ *   node src/cli.js mcp                         # start the MCP stdio server
  */
 
 const { createStore, createObsidian } = require('./storage');
 const { ingest } = require('./pipeline/ingest');
 const { generateQuiz } = require('./quiz/generate');
 const { exportForNotebookLM } = require('./export/notebooklm');
+const { loadFeedsConfig, resolveRsshub, resolveFeedUrl } = require('./feed/rsshub');
 const config = require('./config');
 
 function parseArgs(argv) {
@@ -51,14 +53,25 @@ async function main() {
     return;
   }
 
+  if (cmd === 'feeds') {
+    const cfg = loadFeedsConfig();
+    const rsshub = resolveRsshub(cfg.rsshub);
+    console.log(`RSSHub base: ${rsshub.base}${rsshub.accessKey ? ' (access key set)' : ''}\n`);
+    for (const f of cfg.feeds || []) {
+      const url = resolveFeedUrl(f, rsshub) || `file:${f.file}`;
+      console.log(`[${f.source}/${f.category || '-'}] ${f.name}\n  ${url}`);
+    }
+    return;
+  }
+
   const store = await createStore();
   try {
     switch (cmd) {
       case 'ingest': {
-        const sources = positional.length ? positional : undefined;
         const obsidian = createObsidian();
         const summary = await ingest({
-          store, obsidian, sources,
+          store, obsidian,
+          source: flags.source, category: flags.category,
           limit: flags.limit ? Number(flags.limit) : undefined,
           log: (m) => console.error(m),
         });
@@ -83,8 +96,7 @@ async function main() {
         break;
       }
       case 'get': {
-        const item = await store.getItem(positional[0]);
-        console.log(JSON.stringify(item, null, 2));
+        console.log(JSON.stringify(await store.getItem(positional[0]), null, 2));
         break;
       }
       case 'stats': {
@@ -127,18 +139,17 @@ function printList(items) {
 }
 
 function printHelp() {
-  console.log(`knowledge-base CLI
+  console.log(`rsspool — pool RSS/RSSHub feeds into Postgres/SQLite + Obsidian, serve via MCP
 
-  ingest [sources...] [--limit N]      pull likes/feeds → store + Obsidian
+  ingest [--source S] [--category C] [--limit N]   fetch feeds → store + Obsidian
+  feeds                                            list configured feeds + URLs
   search <query> [--source S] [--limit N]
   recent [--source S] [--tag T] [--limit N]
   get <id>
   stats
-  quiz [--topic T] [--count N]         A-Tour-of-Go-style study levels
-  export-notebooklm [--topic T]        bundle markdown sources for NotebookLM
-  mcp                                  start the MCP stdio server
-
-Sources: hackernews, rss, x, xiaohongshu`);
+  quiz [--topic T] [--count N]                     A-Tour-of-Go-style study levels
+  export-notebooklm [--topic T]                    bundle markdown sources for NotebookLM
+  mcp                                              start the MCP stdio server`);
 }
 
 main().catch((err) => {

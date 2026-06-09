@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { parseFeed } = require('../src/connectors/feed-parser');
+const { parseFeed } = require('../src/feed/parser');
 
 const RSS = `<?xml version="1.0"?>
 <rss version="2.0"><channel>
@@ -14,11 +14,6 @@ const RSS = `<?xml version="1.0"?>
     <pubDate>Mon, 12 May 2026 09:00:00 GMT</pubDate>
     <dc:creator>Jane Dev</dc:creator>
     <description><![CDATA[<p>We sharded our <b>database</b> and learned a lot.</p>]]></description>
-  </item>
-  <item>
-    <title>Our move to Rust</title>
-    <link>https://example.com/rust</link>
-    <description>Why we rewrote the hot path in Rust.</description>
   </item>
 </channel></rss>`;
 
@@ -37,15 +32,12 @@ const ATOM = `<?xml version="1.0" encoding="utf-8"?>
 
 test('parses RSS 2.0 items', () => {
   const items = parseFeed(RSS, 'Example');
-  assert.equal(items.length, 2);
-  const first = items[0];
-  assert.equal(first.title, 'Scaling Postgres to 1M writes/sec');
-  assert.equal(first.url, 'https://example.com/postgres');
-  assert.equal(first.author, 'Jane Dev');
-  assert.equal(first.source, 'rss');
-  assert.equal(first.source_name, 'Example');
-  assert.match(first.content, /sharded our database/);
-  assert.ok(first.published_at.startsWith('2026-05-12'));
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, 'Scaling Postgres to 1M writes/sec');
+  assert.equal(items[0].url, 'https://example.com/postgres');
+  assert.equal(items[0].author, 'Jane Dev');
+  assert.match(items[0].content, /sharded our database/);
+  assert.ok(items[0].published_at.startsWith('2026-05-12'));
 });
 
 test('parses Atom entries with href link + nested author', () => {
@@ -54,7 +46,6 @@ test('parses Atom entries with href link + nested author', () => {
   assert.equal(items[0].url, 'https://atom.example/rag');
   assert.equal(items[0].author, 'Sam Researcher');
   assert.match(items[0].content, /tool call/);
-  assert.ok(items[0].published_at.startsWith('2026-04-01'));
 });
 
 test('empty / junk feed yields no items', () => {

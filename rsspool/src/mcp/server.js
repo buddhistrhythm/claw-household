@@ -1,10 +1,11 @@
 'use strict';
 
 /**
- * mcp/server.js — Model Context Protocol server over the personal knowledge base.
+ * mcp/server.js — Model Context Protocol server over the rsspool feed pool.
  *
- * Exposes the KB to any MCP client (Claude Desktop, Cursor, etc.) via stdio.
- * Tools: search, get, recent, list_sources, stats, related, ingest, quiz.
+ * Exposes the pooled RSS knowledge to any MCP client (Claude Desktop, Cursor,
+ * etc.) via stdio. Tools: search, get, recent, list_sources, stats, related,
+ * ingest, quiz.
  */
 
 const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
@@ -31,20 +32,20 @@ function brief(item) {
     author: item.author,
     excerpt: item.excerpt,
     tags: item.tags,
-    liked_at: item.liked_at,
+    topics: item.topics,
     published_at: item.published_at,
   };
 }
 
 async function buildServer(store) {
-  const server = new McpServer({ name: 'knowledge-base', version: '0.1.0' });
+  const server = new McpServer({ name: 'rsspool', version: '0.1.0' });
 
   server.tool(
-    'kb_search',
-    '在个人知识库中全文检索（标题/正文/作者）。Search the personal knowledge base.',
+    'pool_search',
+    '在 RSS 知识池中全文检索（标题/正文/作者）。Full-text search the feed pool.',
     {
       query: z.string().describe('搜索关键词'),
-      source: z.enum(['hackernews', 'rss', 'x', 'xiaohongshu']).optional().describe('限定来源'),
+      source: z.string().optional().describe('限定来源（feed 的 source，如 blog、hackernews、x、xiaohongshu）'),
       limit: z.number().optional().describe('返回条数，默认 15'),
     },
     async ({ query, source, limit }) => {
@@ -54,8 +55,8 @@ async function buildServer(store) {
   );
 
   server.tool(
-    'kb_get',
-    '按 ID 获取一条知识条目的完整内容。Get a single item by id.',
+    'pool_get',
+    '按 ID 获取一条完整内容。Get a single item by id.',
     { id: z.string() },
     async ({ id }) => {
       const item = await store.getItem(id);
@@ -64,11 +65,11 @@ async function buildServer(store) {
   );
 
   server.tool(
-    'kb_recent',
-    '查看最近收藏/抓取的条目。List recent items (by liked/published/fetched time).',
+    'pool_recent',
+    '查看最近入池的条目。List recent items.',
     {
-      source: z.enum(['hackernews', 'rss', 'x', 'xiaohongshu']).optional(),
-      tag: z.string().optional().describe('按标签筛选，如 llm、rust'),
+      source: z.string().optional(),
+      tag: z.string().optional().describe('按标签筛选，如 llm、rust、ai'),
       limit: z.number().optional(),
     },
     async ({ source, tag, limit }) => {
@@ -78,22 +79,22 @@ async function buildServer(store) {
   );
 
   server.tool(
-    'kb_list_sources',
+    'pool_list_sources',
     '列出各来源的条目数量。Counts per source.',
     {},
     async () => text(await store.stats())
   );
 
   server.tool(
-    'kb_stats',
-    '知识库总览：总数、按来源统计、最近抓取时间。',
+    'pool_stats',
+    '知识池总览：总数、按来源统计、最近抓取时间。',
     {},
     async () => text(await store.stats())
   );
 
   server.tool(
-    'kb_related',
-    '查找与某条目相关的内容（基于共享标签）。Related items via shared tags.',
+    'pool_related',
+    '查找相关条目（基于共享标签）。Related items via shared tags.',
     { id: z.string(), limit: z.number().optional() },
     async ({ id, limit }) => {
       const item = await store.getItem(id);
@@ -111,22 +112,23 @@ async function buildServer(store) {
   );
 
   server.tool(
-    'kb_ingest',
-    '触发抓取：从启用的来源拉取最新收藏并入库。Run ingestion now.',
+    'pool_ingest',
+    '触发抓取：从配置的 RSS / RSSHub 源拉取最新内容入池。Run ingestion now.',
     {
-      sources: z.array(z.enum(['hackernews', 'rss', 'x', 'xiaohongshu'])).optional(),
+      source: z.string().optional().describe('只抓取该 source 的 feed'),
+      category: z.string().optional().describe('只抓取该 category 的 feed'),
       limit: z.number().optional(),
     },
-    async ({ sources, limit }) => {
+    async ({ source, category, limit }) => {
       const obsidian = createObsidian();
-      const summary = await ingest({ store, obsidian, sources, limit });
+      const summary = await ingest({ store, obsidian, source, category, limit });
       return text(summary);
     }
   );
 
   server.tool(
-    'kb_quiz',
-    '从知识库生成 A-Tour-of-Go 风格的测验关卡。Generate study quiz levels.',
+    'pool_quiz',
+    '从知识池生成 A-Tour-of-Go 风格的测验关卡。Generate study quiz levels.',
     { topic: z.string().optional(), count: z.number().optional() },
     async ({ topic, count }) => text(await generateQuiz(store, { topic, count: count || 5 }))
   );

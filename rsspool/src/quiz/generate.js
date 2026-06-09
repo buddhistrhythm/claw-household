@@ -26,11 +26,16 @@ function buildSourceQuestion(item, pool) {
   };
 }
 
-function buildTagQuestion(item, pool) {
-  const realTag = (item.tags || []).find((t) => !['hackernews', 'x', 'xiaohongshu', 'rss'].includes(t));
+/** Tags that merely echo a feed's source/category aren't interesting topics. */
+function sourceTagsOf(pool) {
+  return new Set(pool.flatMap((p) => [p.source, ...(p.topics || [])]).filter(Boolean));
+}
+
+function buildTagQuestion(item, pool, sourceTags = sourceTagsOf(pool)) {
+  const realTag = (item.tags || []).find((t) => !sourceTags.has(t));
   if (!realTag) return null;
   const allTags = uniqueBy(pool.flatMap((p) => p.tags || []))
-    .filter((t) => !['hackernews', 'x', 'xiaohongshu', 'rss'].includes(t) && t !== realTag);
+    .filter((t) => !sourceTags.has(t) && t !== realTag);
   shuffle(allTags);
   const distractors = allTags.slice(0, 3);
   if (distractors.length < 2) return null;
@@ -60,9 +65,13 @@ async function generateQuiz(store, { topic, count = 5 } = {}) {
   shuffle(pool);
 
   const levels = [];
+  const sourceTags = sourceTagsOf(pool);
   // Alternate question styles, but fall back to whichever builder can produce
   // a valid question for this item (e.g. source questions need ≥3 sources).
-  const builders = [buildTagQuestion, buildSourceQuestion];
+  const builders = [
+    (it, p) => buildTagQuestion(it, p, sourceTags),
+    (it, p) => buildSourceQuestion(it, p),
+  ];
   for (const item of pool) {
     if (levels.length >= count) break;
     const ordered = levels.length % 2 === 0 ? builders : [...builders].reverse();
