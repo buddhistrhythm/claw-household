@@ -1,0 +1,26 @@
+{
+  "name": "knowledge-base-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal knowledge base — aggregate likes/favorites from Hacker News, X.com, 小红书 and leading tech blogs; store in Postgres + Obsidian; serve via MCP; learn via A-Tour-of-Go-style quizzes.",
+  "main": "src/cli.js",
+  "bin": {
+    "kb": "src/cli.js"
+  },
+  "scripts": {
+    "ingest": "node src/cli.js ingest",
+    "search": "node src/cli.js search",
+    "stats": "node src/cli.js stats",
+    "mcp": "node src/cli.js mcp",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^16.4.7",
+    "zod": "^3.25.0"
+  },
+  "optionalDependencies": {
+    "pg": "^8.13.0"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "enabled": ["hackernews", "rss", "x", "xiaohongshu"],
+  "hackernews": {
+    "user": null,
+    "limit": 30
+  },
+  "rss": {
+    "limit": 20,
+    "feeds": [
+      { "name": "Anthropic", "url": "https://www.anthropic.com/rss.xml" },
+      { "name": "Uber Engineering", "url": "https://www.uber.com/blog/engineering/rss/" },
+      { "name": "Google Research", "url": "https://research.google/blog/rss/" },
+      { "name": "Netflix Tech Blog", "url": "https://netflixtechblog.com/feed" },
+      { "name": "Cloudflare", "url": "https://blog.cloudflare.com/rss/" },
+      { "name": "Stripe", "url": "https://stripe.com/blog/feed.rss" }
+    ]
+  },
+  "x": {
+    "limit": 50
+  },
+  "xiaohongshu": {
+    "limit": 50
+  }
+}
