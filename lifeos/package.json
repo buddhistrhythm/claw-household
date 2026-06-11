@@ -1,0 +1,18 @@
+{
+  "name": "lifeos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "人生/家庭信息系统 — Postgres 文档+关系存储,DB 主 + Obsidian 富镜像,支持 agentic 检索。Domains: storage(物品归置)、credit-card(信用卡申请)等。",
+  "main": "src/cli.js",
+  "bin": {
+    "lifeos": "src/cli.js"
+  },
+  "scripts": {
+    "migrate": "node src/cli.js migrate",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "pg": "^8.13.0"
+  }
+}
