@@ -1,0 +1,78 @@
+# lifeos 运行时编排 / runtime orchestration.
+#
+# 这是「胶水层」：Postgres + 迁移 + 定时入库 + Obsidian 卷 + MCP，一条命令拉起。
+# 领域逻辑仍在 src/（容器里跑），compose 只负责把这些服务接好、可复现。
+#
+#   cp .env.example .env        # 填 LIFEOS_SECRET_KEY 等
+#   docker compose up -d db     # 起 Postgres
+#   docker compose run --rm migrate
+#   docker compose up -d ingest # 每小时抓 RSS 入库
+#   docker compose run --rm mcp # stdio MCP（供 Claude Desktop/Cursor 连接）
+#
+# 说明：MCP 是 stdio transport，由客户端按需 spawn，因此用 `run` 而非常驻 `up`。
+
+x-app: &app
+  build: .
+  image: lifeos:local
+  environment:
+    DATABASE_URL: postgres://lifeos:lifeos@db:5432/lifeos
+    LIFEOS_OBSIDIAN_VAULT: /vault
+    LIFEOS_SECRET_KEY: ${LIFEOS_SECRET_KEY:-}
+    RSSHUB_BASE: ${RSSHUB_BASE:-https://rsshub.app}
+    RSSHUB_ACCESS_KEY: ${RSSHUB_ACCESS_KEY:-}
+  volumes:
+    - vault:/vault
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  # ── 常驻：Postgres（唯一的真数据） ──────────────────────────────────
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: lifeos
+      POSTGRES_PASSWORD: lifeos
+      POSTGRES_DB: lifeos
+    ports:
+      - "${LIFEOS_PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lifeos -d lifeos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── 一次性：建表 / 迁移 ────────────────────────────────────────────
+  migrate:
+    <<: *app
+    command: ["migrate"]
+    restart: "no"
+
+  # ── 常驻：每小时抓 RSS 入库（knowledge_item） ──────────────────────
+  ingest:
+    <<: *app
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do node src/cli.js ingest || true; sleep ${INGEST_INTERVAL_SECONDS:-3600}; done"]
+    restart: unless-stopped
+
+  # ── 定时：把实体镜像成 Obsidian 笔记（DB 主 → 富镜像） ─────────────
+  obsidian-sync:
+    <<: *app
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do node src/cli.js sync-obsidian || true; sleep ${OBSIDIAN_SYNC_SECONDS:-1800}; done"]
+    restart: unless-stopped
+    profiles: ["mirror"]
+
+  # ── 按需：stdio MCP（agentic 检索）。用 `docker compose run --rm mcp` ──
+  mcp:
+    <<: *app
+    command: ["mcp"]
+    stdin_open: true
+    tty: false
+    profiles: ["tools"]
+
+volumes:
+  pgdata:
+  vault:

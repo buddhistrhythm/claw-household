@@ -1,0 +1,7 @@
+{
+  "rsshub": { "base": "https://rsshub.app" },
+  "feeds": [
+    { "name": "Sample Blog", "source": "rss", "category": "tech", "file": "fixtures/sample-blog.rss.xml", "limit": 20 },
+    { "name": "小红书样例", "source": "rss", "category": "life", "file": "fixtures/sample-xhs.rss.xml", "limit": 20 }
+  ]
+}
