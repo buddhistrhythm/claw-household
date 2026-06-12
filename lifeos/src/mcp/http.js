@@ -19,7 +19,7 @@
  */
 
 const http = require('node:http');
-const { randomUUID } = require('node:crypto');
+const { randomUUID, timingSafeEqual } = require('node:crypto');
 
 const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
 const { isInitializeRequest } = require('@modelcontextprotocol/sdk/types.js');
@@ -52,15 +52,36 @@ function sendJsonRpcError(res, status, message, id = null) {
 }
 
 /**
+ * Optional bearer-token auth (constant-time). Enabled only when LIFEOS_MCP_TOKEN
+ * is set. The store exposes personal/finance data, so anything beyond localhost
+ * should set a token. / 设了 LIFEOS_MCP_TOKEN 才启用；非 localhost 暴露务必设置。
+ */
+function authOk(req, token) {
+  if (!token) return true; // auth disabled
+  const h = req.headers['authorization'] || '';
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  if (!m) return false;
+  const a = Buffer.from(m[1]);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
  * startHttp — boot a node:http server exposing the lifeos MCP over Streamable HTTP.
  *
  * @param {object}  [opts]
  * @param {number}  [opts.port]  默认 LIFEOS_MCP_PORT 或 8848
- * @param {string}  [opts.host]  默认 0.0.0.0
+ * @param {string}  [opts.host]  默认 LIFEOS_MCP_HOST 或 127.0.0.1（安全默认：仅本机）
+ * @param {string}  [opts.token] bearer token；默认取 LIFEOS_MCP_TOKEN（设了才启用鉴权）
  * @param {object}  [opts.store] 复用已有 store；不传则用 createStore() 新建
  * @returns {Promise<{ server: http.Server, port: number, close: () => Promise<void> }>}
  */
-async function startHttp({ port = Number(process.env.LIFEOS_MCP_PORT) || 8848, host = '0.0.0.0', store } = {}) {
+async function startHttp({
+  port = Number(process.env.LIFEOS_MCP_PORT) || 8848,
+  host = process.env.LIFEOS_MCP_HOST || '127.0.0.1',
+  token = process.env.LIFEOS_MCP_TOKEN || null,
+  store,
+} = {}) {
   // 若调用方未注入 store，则自建一个（close() 时一并关闭）。
   const ownStore = !store;
   if (!store) store = await createStore();
@@ -69,6 +90,7 @@ async function startHttp({ port = Number(process.env.LIFEOS_MCP_PORT) || 8848, h
   const transports = new Map();
 
   async function handleMcp(req, res) {
+    if (!authOk(req, token)) return sendJsonRpcError(res, 401, 'Unauthorized');
     const sessionId = req.headers['mcp-session-id'];
 
     if (req.method === 'POST') {
@@ -164,9 +186,10 @@ async function startHttp({ port = Number(process.env.LIFEOS_MCP_PORT) || 8848, h
  */
 async function startHttpMain({ port, host } = {}) {
   const { port: boundPort, close } = await startHttp({ port, host });
-  const displayHost = host || '0.0.0.0';
+  const displayHost = host || process.env.LIFEOS_MCP_HOST || '127.0.0.1';
+  const authNote = process.env.LIFEOS_MCP_TOKEN ? 'bearer-token auth ON' : 'NO auth (set LIFEOS_MCP_TOKEN if not localhost)';
   // eslint-disable-next-line no-console
-  console.error(`[lifeos-mcp] Streamable HTTP listening on http://${displayHost}:${boundPort}/mcp (health: /healthz)`);
+  console.error(`[lifeos-mcp] Streamable HTTP on http://${displayHost}:${boundPort}/mcp — ${authNote} (health: /healthz)`);
 
   // 优雅退出。/ Graceful shutdown.
   const shutdown = async () => {

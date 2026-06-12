@@ -82,8 +82,10 @@ services:
       LIFEOS_OBSIDIAN_VAULT: /vault
       LIFEOS_SECRET_KEY: ${LIFEOS_SECRET_KEY:-}
       LIFEOS_MCP_PORT: "8848"
+      LIFEOS_MCP_HOST: "0.0.0.0"          # 容器内监听全网卡，靠下方端口发布与 token 控制暴露
+      LIFEOS_MCP_TOKEN: ${LIFEOS_MCP_TOKEN:-}  # 发布到 localhost 之外务必设置
     ports:
-      - "${LIFEOS_MCP_PORT:-8848}:8848"
+      - "127.0.0.1:${LIFEOS_MCP_PORT:-8848}:8848"  # 默认只发布到宿主 localhost
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8848/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]

@@ -42,6 +42,15 @@ function rawSecret() {
   return s && s.length ? s : null;
 }
 
+let _warnedPlaintext = false;
+/** 首次以明文存敏感字段时，往 stderr 发一次告警（不刷屏）。 */
+function warnPlaintextOnce() {
+  if (_warnedPlaintext) return;
+  _warnedPlaintext = true;
+  // eslint-disable-next-line no-console
+  console.error('[lifeos] WARNING: LIFEOS_SECRET_KEY 未设置 — 敏感字段以明文 (plain:) 存储。生产请设置密钥，或设 LIFEOS_ENCRYPTION_REQUIRED=1 强制报错。');
+}
+
 /** 是否已配置密钥 / whether a key is configured. */
 function isEnabled() {
   return rawSecret() !== null;
@@ -60,7 +69,12 @@ function encrypt(value) {
   const json = JSON.stringify(value);
   const secret = rawSecret();
   if (!secret) {
-    // 无密钥的开发态：明文标记，系统仍可工作 (clearly marked unencrypted).
+    // 生产应拒绝静默明文：设 LIFEOS_ENCRYPTION_REQUIRED=1 时直接报错。
+    if (process.env.LIFEOS_ENCRYPTION_REQUIRED) {
+      throw new Error('crypto.encrypt: LIFEOS_ENCRYPTION_REQUIRED is set but LIFEOS_SECRET_KEY is missing — refusing to store sensitive data as plaintext');
+    }
+    // 无密钥的开发态：明文标记，系统仍可工作 (clearly marked unencrypted)。一次性告警。
+    warnPlaintextOnce();
     return PLAIN_PREFIX + Buffer.from(json, 'utf8').toString('base64');
   }
   const key = deriveKey(secret);
