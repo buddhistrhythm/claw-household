@@ -110,3 +110,22 @@ test('buildSimilarityEdges: links pairs sharing >= minShared, skips fewer', asyn
     assert.equal((await store.relations.from(subj, 'related_to')).length, 1);
   } finally { await store.close(); }
 });
+
+test('expand: node cap never yields edges to absent nodes (self-consistent subgraph)', async () => {
+  const store = await freshStore();
+  try {
+    const g = graphFactory(store);
+    const hub = await store.entities.create({ type: 'note', title: 'hub' });
+    for (let i = 0; i < 5; i++) {
+      const leaf = await store.entities.create({ type: 'note', title: `leaf${i}` });
+      await store.relations.link(hub.id, 'links_to', leaf.id);
+    }
+    const sub = await g.expand(hub.id, { depth: 1, limit: 3 });
+    assert.ok(sub.nodes.length <= 3, 'respects node cap');
+    const present = new Set(sub.nodes.map((n) => n.id));
+    for (const e of sub.edges) {
+      assert.ok(present.has(e.subject_id) && present.has(e.object_id),
+        'every edge endpoint is a present node');
+    }
+  } finally { await store.close(); }
+});

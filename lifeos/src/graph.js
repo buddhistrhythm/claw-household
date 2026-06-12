@@ -102,10 +102,18 @@ module.exports = function graph(store) {
       if (!frontier.length) break;
     }
 
+    // Drop edges whose endpoints were excluded by the node cap, so the returned
+    // subgraph is consistent (no edges to nodes that aren't present).
+    // 丢弃因节点封顶而缺失端点的边，保证子图自洽（不出现指向缺失节点的边）。
+    const present = nodes;
+    const edgeList = Array.from(edges.values()).filter(
+      (e) => present.has(e.subject_id) && present.has(e.object_id)
+    );
+
     return {
       root: id,
       nodes: Array.from(nodes.values()),
-      edges: Array.from(edges.values()),
+      edges: edgeList,
     };
   }
 

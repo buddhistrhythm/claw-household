@@ -28,3 +28,14 @@ test('renders frontmatter, body, flattened data, and relation wikilinks', () => 
 test('noteBasename is stable id + slug', () => {
   assert.equal(noteBasename({ id: 'ent_x', title: '第二抽屉' }), 'ent_x__第二抽屉');
 });
+
+test('never mirrors the sensitive data.enc blob into frontmatter', () => {
+  const entity = {
+    id: 'ent_txn1', type: 'finance_txn', title: 'Clinic', tags: ['finance'], topics: [],
+    data: { amount_cents: 12000, category: 'health', enc: 'plain:v1:eyJsYXN0NCI6Ijc3NzcifQ==' },
+  };
+  const md = renderEntityNote(entity, []);
+  assert.doesNotMatch(md, /enc:/);          // the blob key is excluded
+  assert.doesNotMatch(md, /plain:v1:/);     // and its (dev-mode decodable) value
+  assert.match(md, /amount_cents: 12000/);  // non-sensitive fields still mirrored
+});

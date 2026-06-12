@@ -48,11 +48,16 @@ async function ingest(opts = {}) {
       log(`→ ${feed.name} (${src})…`);
       const raw = await loadFeed(feed, { rsshub, limit });
       for (const r of raw) {
-        const item = normalize(r);
-        item.tags = uniq([...(item.tags || []), ...deriveTags(item)]);
-        const res = await kn.upsertItem(item);
-        summary[res.status]++;
-        summary.total++;
+        // 单条出错不连累同 feed 的其它条目（坏 item 不应吞掉好 item）。
+        try {
+          const item = normalize(r);
+          item.tags = uniq([...(item.tags || []), ...deriveTags(item)]);
+          const res = await kn.upsertItem(item);
+          summary[res.status]++;
+          summary.total++;
+        } catch (e) {
+          summary.errors.push({ feed: feed.name, source: src, item: r && (r.url || r.title), error: e.message });
+        }
       }
       log(`  ${feed.name}: ${raw.length} fetched`);
     } catch (e) {

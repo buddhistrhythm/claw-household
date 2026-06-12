@@ -13,13 +13,22 @@
 -- the database) the *first* time. Once installed it is a no-op. 生产注意：首次
 -- 安装扩展需超级用户权限；已安装后此语句为空操作。
 
-CREATE EXTENSION IF NOT EXISTS vector;
+-- Resilient: if pgvector can't be installed (no superuser / not packaged), the
+-- core schema (001) still migrates and the semantic layer self-disables via
+-- semantic.isEnabled(). The embedding column/index are only added when the
+-- `vector` type actually exists.
+-- 健壮性：若无法安装 pgvector（非超级用户/未打包），核心表(001)照样迁移，语义层
+-- 经 semantic.isEnabled() 自动关闭；仅当 vector 类型存在时才加嵌入列与索引。
+DO $$
+BEGIN
+  BEGIN
+    CREATE EXTENSION IF NOT EXISTS vector;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'lifeos: pgvector unavailable (%); semantic layer disabled', SQLERRM;
+  END;
 
--- 256-dim embedding column (see src/embeddings.js for the fixed dimension).
--- 256 维嵌入列（固定维度，见 src/embeddings.js）。
-ALTER TABLE entities ADD COLUMN IF NOT EXISTS embedding public.vector(256);
-
--- HNSW index for cosine distance — no training data needed (pgvector >= 0.5).
--- 余弦距离的 HNSW 索引 —— 无需训练数据。
-CREATE INDEX IF NOT EXISTS idx_entities_embedding
-  ON entities USING hnsw (embedding public.vector_cosine_ops);
+  IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'vector') THEN
+    EXECUTE 'ALTER TABLE entities ADD COLUMN IF NOT EXISTS embedding public.vector(256)';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_entities_embedding ON entities USING hnsw (embedding public.vector_cosine_ops)';
+  END IF;
+END $$;

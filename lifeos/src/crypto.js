@@ -93,6 +93,11 @@ function decrypt(token) {
   if (typeof token !== 'string') throw new Error('crypto.decrypt: token must be a string');
 
   if (token.startsWith(PLAIN_PREFIX)) {
+    // 防降级：要求加密时拒绝读取明文令牌（与写路径的 LIFEOS_ENCRYPTION_REQUIRED 对称）。
+    // Anti-downgrade: when encryption is required, refuse to read a plaintext token.
+    if (process.env.LIFEOS_ENCRYPTION_REQUIRED) {
+      throw new Error('crypto.decrypt: refusing to read a plaintext (plain:) token while LIFEOS_ENCRYPTION_REQUIRED is set');
+    }
     const json = Buffer.from(token.slice(PLAIN_PREFIX.length), 'base64').toString('utf8');
     return JSON.parse(json);
   }

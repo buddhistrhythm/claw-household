@@ -57,7 +57,8 @@ module.exports = function financeDomain(store) {
       raw_descriptor, currency = 'USD', family_id } = {}) {
       if (!account_id) throw new Error('finance.addTxn: `account_id` is required');
       if (!DIRECTIONS.includes(direction)) throw new Error(`invalid direction: ${direction} (debit|credit)`);
-      if (!Number.isFinite(amount_cents)) throw new Error('finance.addTxn: `amount_cents` must be a number');
+      // 金额以「分」为整数存储：禁止小数分，避免 ::bigint 聚合时的截断/歧义。
+      if (!Number.isInteger(amount_cents)) throw new Error('finance.addTxn: `amount_cents` must be an integer (cents)');
 
       const txn = await entities.create({
         type: 'finance_txn',
@@ -103,40 +104,51 @@ module.exports = function financeDomain(store) {
     },
 
     /**
-     * 账户余额：SUM(credits) - SUM(debits)。
-     * 约定：credit 为入账(+)，debit 为支出(-)。
+     * 账户余额，**按币种分组**（绝不跨币种相加）。credit 入账(+)，debit 支出(-)。
+     * 返回 { account_id, by_currency:[{currency,credit_cents,debit_cents,balance_cents}] }。
+     * 可选 `currency` 只看某币种。
      */
-    async balance(account_id) {
+    async balance(account_id, { currency } = {}) {
+      const vals = [account_id];
+      let filter = '';
+      if (currency) { vals.push(currency); filter = ` AND data->>'currency' = $${vals.length}`; }
       const r = await store.db.query(
-        `SELECT
+        `SELECT COALESCE(data->>'currency', 'USD') AS currency,
            COALESCE(SUM((data->>'amount_cents')::bigint) FILTER (WHERE data->>'direction' = 'credit'), 0)::bigint AS credit_cents,
            COALESCE(SUM((data->>'amount_cents')::bigint) FILTER (WHERE data->>'direction' = 'debit'), 0)::bigint  AS debit_cents
          FROM entities
-         WHERE type = 'finance_txn' AND archived = false AND data->>'account_id' = $1`,
-        [account_id]
+         WHERE type = 'finance_txn' AND archived = false AND data->>'account_id' = $1${filter}
+         GROUP BY COALESCE(data->>'currency', 'USD')
+         ORDER BY currency`,
+        vals
       );
-      const credit_cents = Number(r.rows[0].credit_cents);
-      const debit_cents = Number(r.rows[0].debit_cents);
-      return { account_id, credit_cents, debit_cents, balance_cents: credit_cents - debit_cents };
+      const by_currency = r.rows.map((row) => {
+        const credit_cents = Number(row.credit_cents);
+        const debit_cents = Number(row.debit_cents);
+        return { currency: row.currency, credit_cents, debit_cents, balance_cents: credit_cents - debit_cents };
+      });
+      return { account_id, by_currency };
     },
 
-    /** 按品类汇总区间内支出（仅 debit），金额降序。 */
-    async spendByCategory({ from, to, family_id } = {}) {
+    /** 按品类汇总区间内支出（仅 debit），**按币种分组**，金额降序。 */
+    async spendByCategory({ from, to, family_id, currency } = {}) {
       const where = [`type = 'finance_txn'`, 'archived = false', `data->>'direction' = 'debit'`];
       const vals = [];
       if (family_id) { vals.push(family_id); where.push(`family_id = $${vals.length}`); }
+      if (currency) { vals.push(currency); where.push(`data->>'currency' = $${vals.length}`); }
       if (from) { vals.push(from); where.push(`(data->>'posted_on')::date >= $${vals.length}::date`); }
       if (to) { vals.push(to); where.push(`(data->>'posted_on')::date <= $${vals.length}::date`); }
       const r = await store.db.query(
         `SELECT COALESCE(data->>'category', '(uncategorized)') AS category,
+                COALESCE(data->>'currency', 'USD') AS currency,
                 COALESCE(SUM((data->>'amount_cents')::bigint), 0)::bigint AS spent_cents
          FROM entities
          WHERE ${where.join(' AND ')}
-         GROUP BY COALESCE(data->>'category', '(uncategorized)')
+         GROUP BY COALESCE(data->>'category', '(uncategorized)'), COALESCE(data->>'currency', 'USD')
          ORDER BY spent_cents DESC`,
         vals
       );
-      return r.rows.map((row) => ({ category: row.category, spent_cents: Number(row.spent_cents) }));
+      return r.rows.map((row) => ({ category: row.category, currency: row.currency, spent_cents: Number(row.spent_cents) }));
     },
 
     /** 解密一笔交易的敏感字段（唯一暴露 memo/raw_descriptor 的出口）。 */

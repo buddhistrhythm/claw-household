@@ -38,6 +38,9 @@ function renderEntityNote(entity, edges = []) {
   if (entity.occurred_at) fm.push(`occurred_at: ${yamlScalar(entity.occurred_at)}`);
   for (const [k, v] of Object.entries(entity.data || {})) {
     if (v === null || v === undefined || v === '') continue;
+    // 永不把敏感加密 blob 写进镜像：dev 明文模式下它可被 base64 还原。
+    // Never mirror the sensitive blob — in plaintext dev mode it is trivially decodable.
+    if (k === 'enc') continue;
     fm.push(`${k}: ${Array.isArray(v) ? yamlList(v) : yamlScalar(v)}`);
   }
   fm.push('---');

@@ -113,10 +113,12 @@ async function startHttp({
             transports.set(sid, transport);
           },
         });
-        transport.onclose = () => {
-          if (transport.sessionId) transports.delete(transport.sessionId);
-        };
         const server = await buildServer(store);
+        // 会话结束时既清映射、也关掉这条会话的 server，避免守护进程长跑累积实例。
+        transport.onclose = async () => {
+          if (transport.sessionId) transports.delete(transport.sessionId);
+          try { await server.close(); } catch { /* ignore */ }
+        };
         await server.connect(transport);
       } else {
         // 非 initialize 又无有效会话 → 拒绝。

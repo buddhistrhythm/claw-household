@@ -31,6 +31,24 @@ function getStatus(url) {
   });
 }
 
+/** Minimal POST helper (for auth checks). */
+function postStatus(url, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = http.request(
+      { method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...headers } },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      }
+    );
+    req.on('error', reject);
+    req.end(JSON.stringify(body));
+  });
+}
+
 test('MCP over Streamable HTTP: client round-trip + healthz', async () => {
   const store = await freshStore();
   // port:0 -> ephemeral; host 127.0.0.1 keeps it local-only.
@@ -58,6 +76,26 @@ test('MCP over Streamable HTTP: client round-trip + healthz', async () => {
     } finally {
       await client.close();
     }
+  } finally {
+    await close();
+  }
+});
+
+test('HTTP daemon: bearer-token auth gates /mcp, leaves /healthz open', async () => {
+  const store = await freshStore();
+  const { port, close } = await startHttp({ port: 0, host: '127.0.0.1', token: 'sekret', store });
+  try {
+    // health is unauthenticated
+    const health = await getStatus(`http://127.0.0.1:${port}/healthz`);
+    assert.strictEqual(health.status, 200);
+
+    // POST /mcp without a token -> 401
+    const unauth = await postStatus(`http://127.0.0.1:${port}/mcp`, {}, {});
+    assert.strictEqual(unauth.status, 401, 'no token should be rejected');
+
+    // wrong token -> 401
+    const wrong = await postStatus(`http://127.0.0.1:${port}/mcp`, {}, { authorization: 'Bearer nope' });
+    assert.strictEqual(wrong.status, 401, 'wrong token should be rejected');
   } finally {
     await close();
   }

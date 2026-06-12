@@ -56,12 +56,37 @@ test('finance: addTxn + balance math + from_account relation', async () => {
     assert.equal(edges[0].object_id, acct.id);
 
     const bal = await fin.balance(acct.id);
-    assert.equal(bal.credit_cents, 500000);
-    assert.equal(bal.debit_cents, 1299 + 8800);
-    assert.equal(bal.balance_cents, 500000 - 1299 - 8800);
+    assert.equal(bal.by_currency.length, 1);
+    const usd = bal.by_currency[0];
+    assert.equal(usd.currency, 'USD');
+    assert.equal(usd.credit_cents, 500000);
+    assert.equal(usd.debit_cents, 1299 + 8800);
+    assert.equal(usd.balance_cents, 500000 - 1299 - 8800);
 
     // invalid direction rejected
     await assert.rejects(() => fin.addTxn({ account_id: acct.id, amount_cents: 1, direction: 'nope' }));
+    // non-integer cents rejected (no fractional cents into ::bigint aggregates)
+    await assert.rejects(() => fin.addTxn({ account_id: acct.id, amount_cents: 10.5, direction: 'debit' }));
+  } finally { await store.close(); }
+});
+
+test('finance: balance never sums across currencies', async () => {
+  const store = await freshStore();
+  const fin = financeDomain(store);
+  try {
+    const acct = await fin.createAccount({ name: 'Travel', kind: 'checking' });
+    await fin.addTxn({ account_id: acct.id, amount_cents: 5000, direction: 'debit', currency: 'USD', posted_on: '2026-06-01' });
+    await fin.addTxn({ account_id: acct.id, amount_cents: 100000, direction: 'debit', currency: 'JPY', posted_on: '2026-06-02' });
+
+    const bal = await fin.balance(acct.id);
+    assert.equal(bal.by_currency.length, 2, 'USD and JPY kept separate, not summed');
+    const map = Object.fromEntries(bal.by_currency.map((c) => [c.currency, c.debit_cents]));
+    assert.equal(map.USD, 5000);
+    assert.equal(map.JPY, 100000);
+
+    const jpyOnly = await fin.balance(acct.id, { currency: 'JPY' });
+    assert.equal(jpyOnly.by_currency.length, 1);
+    assert.equal(jpyOnly.by_currency[0].balance_cents, -100000);
   } finally { await store.close(); }
 });
 
@@ -96,8 +121,8 @@ test('finance: spendByCategory aggregates debits desc', async () => {
 
     const spend = await fin.spendByCategory({ from: '2026-06-01', to: '2026-06-30' });
     assert.equal(spend.length, 2);
-    assert.deepEqual(spend[0], { category: 'groceries', spent_cents: 8000 });
-    assert.deepEqual(spend[1], { category: 'coffee', spent_cents: 1500 });
+    assert.deepEqual(spend[0], { category: 'groceries', currency: 'USD', spent_cents: 8000 });
+    assert.deepEqual(spend[1], { category: 'coffee', currency: 'USD', spent_cents: 1500 });
   } finally { await store.close(); }
 });
 

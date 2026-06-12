@@ -21,6 +21,11 @@ function ident(name) {
 }
 
 function createDb({ databaseUrl, schema = 'public' } = {}) {
+  // Validate before interpolating into connection options (trust-boundary
+  // consistency with ident() used in migrate/drop). / 入连接串前先校验，防注入。
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) {
+    throw new Error(`unsafe schema name: ${schema}`);
+  }
   const pool = new Pool({
     connectionString: databaseUrl,
     options: `-c search_path=${schema}`,
