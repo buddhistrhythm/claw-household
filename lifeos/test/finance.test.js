@@ -1,6 +1,8 @@
 'use strict';
 
-// Run with LIFEOS_SECRET_KEY set so the encryption path is exercised.
+// Exercise the encryption path: ensure a key is set before crypto.js reads it
+// (lazily, at call time), so the suite is hermetic and passes without external env.
+process.env.LIFEOS_SECRET_KEY = process.env.LIFEOS_SECRET_KEY || 'finance-test-key';
 
 const { test } = require('node:test');
 const assert = require('node:assert');

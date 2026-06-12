@@ -27,6 +27,7 @@ const libraryDomain = require('./domains/library');
 const financeDomain = require('./domains/finance');
 const knowledgeDomain = require('./domains/knowledge');
 const graphFactory = require('./graph');
+const semanticFactory = require('./semantic');
 const { ingest } = require('./ingest');
 const { writeEntityNote } = require('./obsidian');
 const { BUILTIN_TYPES } = require('./store/types');
@@ -56,8 +57,12 @@ async function main() {
   const { positional, flags } = parseArgs(rest);
   if (!cmd || cmd === 'help') return printHelp();
 
-  // MCP runs its own store + a blocking stdio transport; don't open/close here.
-  if (cmd === 'mcp') return require('./mcp/server').startMcp();
+  // MCP runs its own store + a blocking transport; don't open/close here.
+  if (cmd === 'mcp') return require('./mcp/server').startMcp();           // stdio (client-spawned)
+  if (cmd === 'mcp-http') return require('./mcp/http').startHttpMain({    // long-lived HTTP daemon
+    port: flags.port ? Number(flags.port) : undefined,
+    host: typeof flags.host === 'string' ? flags.host : undefined,
+  });
 
   const store = await createStore();
   const storage = storageDomain(store);
@@ -67,6 +72,7 @@ async function main() {
   const finance = financeDomain(store);
   const knowledge = knowledgeDomain(store);
   const graph = graphFactory(store);
+  const semantic = semanticFactory(store);
   const out = (o) => console.log(JSON.stringify(o, null, 2));
 
   try {
@@ -113,8 +119,13 @@ async function main() {
       case 'reveal': out(await finance.reveal(positional[0])); break;
       case 'acct-reveal': out(await finance.revealAccount(positional[0])); break;
 
-      // knowledge / rss ingest
-      case 'ingest': out(await ingest({ store, source: flags.source, category: flags.category, limit: num(flags.limit), log: (m) => console.error(m) })); break;
+      // knowledge / rss ingest (embed new items right after, so semantic search sees them)
+      case 'ingest': {
+        const summary = await ingest({ store, source: flags.source, category: flags.category, limit: num(flags.limit), log: (m) => console.error(m) });
+        const embedded = await semantic.reindexAll({ type: 'knowledge_item' }).catch(() => ({ indexed: 0 }));
+        out({ ...summary, embedded: embedded.indexed });
+        break;
+      }
       case 'ki-recent': out(await knowledge.recent({ tag: flags.tag, limit: num(flags.limit) })); break;
       case 'ki-related': out(await knowledge.related(positional[0], { limit: num(flags.limit) })); break;
       case 'ki-search': out(await knowledge.search(positional.join(' '), {})); break;
@@ -123,6 +134,11 @@ async function main() {
       case 'graph-neighbors': out(await graph.neighbors(positional[0], { predicate: flags.predicate, limit: num(flags.limit) })); break;
       case 'graph-expand': out(await graph.expand(positional[0], { depth: flags.depth ? Number(flags.depth) : 1 })); break;
       case 'graph-build': out(await graph.buildSimilarityEdges({})); break;
+
+      // semantic (pgvector) + hybrid retrieval
+      case 'reindex': out(await semantic.reindexAll({ type: flags.type, limit: num(flags.limit) })); break;
+      case 'semantic-search': out(await semantic.semanticSearch(positional.join(' '), { type: flags.type, limit: num(flags.limit) })); break;
+      case 'hybrid-search': out(await semantic.hybridSearch(positional.join(' '), { type: flags.type, limit: num(flags.limit) })); break;
 
       case 'sync-obsidian': {
         if (!config.obsidianEnabled) { console.error('Obsidian disabled'); break; }
@@ -153,7 +169,9 @@ async function main() {
 function printHelp() {
   console.log(`lifeos — Postgres life/household info store (DB主 + Obsidian镜像)
 
-  core:     migrate | stats | search <q> [--type T] | sync-obsidian | mcp
+  core:     migrate | stats | search <q> [--type T] | sync-obsidian
+            mcp (stdio) | mcp-http [--port N] [--host H] (daemon)
+  semantic: reindex [--type T] | semantic-search <q> [--type T] | hybrid-search <q>
   storage:  loc <name> [--kind K] [--parent ID]
             put <item> [--qty N] [--in LOC_ID] | where <item id> | contents <loc id>
   credit:   cc-add <card> [--issuer X] [--applied DATE] [--fee N] [--bonus-deadline DATE]

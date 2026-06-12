@@ -21,6 +21,7 @@ const { z } = require('zod');
 
 const { createStore } = require('../store');
 const graphFactory = require('../graph');
+const semanticFactory = require('../semantic');
 
 function text(obj) {
   return { content: [{ type: 'text', text: JSON.stringify(obj, null, 2) }] };
@@ -35,17 +36,21 @@ function excerptOf(e) {
 /**
  * assembleContext — the deterministic citation engine behind `life_context`.
  *
- * Runs store.search(query), takes the top hits, and for each pulls 1-hop graph
- * neighbors as supporting context. Every source carries a `citation` (data.url
- * || source_ref || id) and a `why` explaining how it entered the set ("matched
- * query" for direct hits, "linked via <predicate>" for neighbors). NO LLM call.
+ * Retrieves the top hits (via `opts.retrieve`, default store.search; the MCP tool
+ * passes semantic.hybridSearch so retrieval fuses FTS + vector), and for each
+ * pulls 1-hop graph neighbors as supporting context. Every source carries a
+ * `citation` (data.url || source_ref || id) and a `why` explaining how it entered
+ * the set ("matched query" for direct hits, "linked via <predicate>" for
+ * neighbors). NO LLM call. Stays a pure function of (store, graph, query, opts).
  *
- * 确定性的引用组装：跑全文检索，取 top 命中，对每条拉取 1 跳邻居作为佐证。
- * 每个 source 都带 `citation` 与 `why`（直接命中为 matched query，邻居为
- * linked via <predicate>）。服务端不调用大模型。
+ * 确定性的引用组装：用 `opts.retrieve`（默认 store.search；MCP 工具传入
+ * semantic.hybridSearch，使检索为「全文 + 向量」融合）取 top 命中，对每条拉取
+ * 1 跳邻居作为佐证。每个 source 都带 `citation` 与 `why`（直接命中为 matched
+ * query，邻居为 linked via <predicate>）。服务端不调用大模型，且保持为纯函数。
  */
-async function assembleContext(store, graph, query, { hops = 5, limit = 5 } = {}) {
-  const hits = await store.search(query, { limit });
+async function assembleContext(store, graph, query, { hops = 5, limit = 5, retrieve } = {}) {
+  const search = retrieve || ((q, o) => store.search(q, o));
+  const hits = await search(query, { limit });
   const sources = [];
   const seen = new Set();
 
@@ -87,6 +92,7 @@ async function assembleContext(store, graph, query, { hops = 5, limit = 5 } = {}
 async function buildServer(store) {
   const server = new McpServer({ name: 'lifeos', version: '0.1.0' });
   const graph = graphFactory(store);
+  const semantic = semanticFactory(store);
 
   server.tool(
     'life_search',
@@ -171,7 +177,39 @@ async function buildServer(store) {
       limit: z.number().optional().describe('参与的检索命中数，默认 5'),
     },
     async ({ query, hops, limit }) =>
-      text(await assembleContext(store, graph, query, { hops: hops || 5, limit: limit || 5 }))
+      text(
+        await assembleContext(store, graph, query, {
+          hops: hops || 5,
+          limit: limit || 5,
+          // Fuse FTS + vector for retrieval. / 检索用「全文 + 向量」融合。
+          retrieve: (q, o) => semantic.hybridSearch(q, o),
+        })
+      )
+  );
+
+  server.tool(
+    'life_semantic_search',
+    '向量语义检索（pgvector 余弦相似度），可发现无共享关键词但语义相关的实体。' +
+      'Vector semantic search (pgvector cosine) — finds entities related in meaning.',
+    {
+      query: z.string().describe('检索意图'),
+      type: z.string().optional().describe('限定实体类型'),
+      limit: z.number().optional().describe('返回条数，默认 25'),
+    },
+    async ({ query, type, limit }) => {
+      const hits = await semantic.semanticSearch(query, { type, limit });
+      return text({ query, count: hits.length, hits, enabled: await semantic.isEnabled() });
+    }
+  );
+
+  server.tool(
+    'life_reindex',
+    '为缺失向量的实体回填嵌入（批量导入后调用）。Backfill embeddings for entities lacking one.',
+    {
+      type: z.string().optional().describe('仅回填某类型'),
+      limit: z.number().optional().describe('本次最多回填条数'),
+    },
+    async ({ type, limit }) => text(await semantic.reindexAll({ type, limit }))
   );
 
   return server;

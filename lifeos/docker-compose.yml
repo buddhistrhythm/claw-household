@@ -65,13 +65,31 @@ services:
     restart: unless-stopped
     profiles: ["mirror"]
 
-  # ── 按需：stdio MCP（agentic 检索）。用 `docker compose run --rm mcp` ──
+  # ── 按需：stdio MCP（客户端按需 spawn）。用 `docker compose run --rm mcp` ──
   mcp:
     <<: *app
     command: ["mcp"]
     stdin_open: true
     tty: false
     profiles: ["tools"]
+
+  # ── 常驻：HTTP/SSE MCP（agentic 检索，可作为网络 service） ──────────
+  mcp-http:
+    <<: *app
+    command: ["mcp-http"]
+    environment:
+      DATABASE_URL: postgres://lifeos:lifeos@db:5432/lifeos
+      LIFEOS_OBSIDIAN_VAULT: /vault
+      LIFEOS_SECRET_KEY: ${LIFEOS_SECRET_KEY:-}
+      LIFEOS_MCP_PORT: "8848"
+    ports:
+      - "${LIFEOS_MCP_PORT:-8848}:8848"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8848/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   pgdata:
