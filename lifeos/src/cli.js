@@ -4,37 +4,23 @@
 /**
  * cli.js — lifeos command line.
  *
- *   node src/cli.js migrate
- *   node src/cli.js stats
- *   node src/cli.js search <query> [--type T]
- *   node src/cli.js sync-obsidian
- *   storage:
- *     node src/cli.js loc <name> [--kind K] [--parent ID]
- *     node src/cli.js put <item name> [--qty N] [--in LOCATION_ID]
- *     node src/cli.js where <item id>
- *     node src/cli.js contents <location id>
- *   credit card:
- *     node src/cli.js cc-add <card> [--issuer X] [--applied YYYY-MM-DD] [--fee N] [--bonus-deadline YYYY-MM-DD]
- *     node src/cli.js cc-list [--status S]
- *     node src/cli.js cc-deadlines [--days N]
+ * Domain commands are NOT listed here: each domain declares its own commands
+ * (module.exports.commands) and src/registry.js derives the dispatch table and
+ * the help text. Only cross-domain infrastructure commands live in this file.
+ * 领域命令不在本文件登记 —— 各领域模块自带 `commands` 声明，registry 派生分发表
+ * 与帮助文本；这里只保留跨领域的基础设施命令。
+ *
+ * Run `node src/cli.js help` for the full, auto-generated command list.
  */
 
 const { createStore } = require('./store');
-const storageDomain = require('./domains/storage');
-const creditCardDomain = require('./domains/credit_card');
-const notesDomain = require('./domains/notes');
-const libraryDomain = require('./domains/library');
-const financeDomain = require('./domains/finance');
-const knowledgeDomain = require('./domains/knowledge');
+const registry = require('./registry');
 const graphFactory = require('./graph');
 const semanticFactory = require('./semantic');
 const { ingest } = require('./ingest');
 const { writeEntityNote } = require('./obsidian');
 const { BUILTIN_TYPES } = require('./store/types');
 const config = require('./config');
-
-const csv = (v) => (v ? String(v).split(',').map((s) => s.trim()).filter(Boolean) : undefined);
-const num = (v) => (v === undefined || v === true ? undefined : Number(v));
 
 function parseArgs(argv) {
   const positional = [];
@@ -51,94 +37,61 @@ function parseArgs(argv) {
 }
 
 const DOMAIN_OF = Object.fromEntries(BUILTIN_TYPES.map((t) => [t.type, t.domain]));
+const { num } = registry.util;
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseArgs(rest);
   if (!cmd || cmd === 'help') return printHelp();
 
-  // MCP runs its own store + a blocking transport; don't open/close here.
-  if (cmd === 'mcp') return require('./mcp/server').startMcp();           // stdio (client-spawned)
-  if (cmd === 'mcp-http') return require('./mcp/http').startHttpMain({    // long-lived HTTP daemon
-    port: flags.port ? Number(flags.port) : undefined,
-    host: typeof flags.host === 'string' ? flags.host : undefined,
-  });
+  // MCP servers run their own store + blocking transport; don't open/close here.
+  if (cmd === 'mcp') return require('./mcp/server').startMcp();
+  if (cmd === 'mcp-http') {
+    return require('./mcp/http').startHttpMain({
+      port: flags.port ? Number(flags.port) : undefined,
+      host: typeof flags.host === 'string' ? flags.host : undefined,
+    });
+  }
 
   const store = await createStore();
-  const storage = storageDomain(store);
-  const cc = creditCardDomain(store);
-  const notes = notesDomain(store);
-  const library = libraryDomain(store);
-  const finance = financeDomain(store);
-  const knowledge = knowledgeDomain(store);
+  const domains = registry.instantiate(store);
+  const { table } = registry.commandTable(store, domains);
   const graph = graphFactory(store);
   const semantic = semanticFactory(store);
   const out = (o) => console.log(JSON.stringify(o, null, 2));
 
   try {
+    // ── domain commands: derived from the manifests ──────────────────────────
+    if (table[cmd]) { out(await table[cmd].run({ positional, flags, store, domains })); return; }
+
     switch (cmd) {
+      // ── core ──────────────────────────────────────────────────────────────
       case 'migrate': out({ migrated: true, schema: store.db.schema }); break;
       case 'stats': out(await store.stats()); break;
       case 'search': out(await store.search(positional.join(' '), { type: flags.type })); break;
+      case 'semantic-search': out(await semantic.semanticSearch(positional.join(' '), { type: flags.type, limit: num(flags.limit) })); break;
+      case 'hybrid-search': out(await semantic.hybridSearch(positional.join(' '), { type: flags.type, limit: num(flags.limit) })); break;
+      case 'reindex': out(await semantic.reindexAll({ type: flags.type, limit: num(flags.limit) })); break;
 
-      case 'loc': out(await storage.createLocation({ name: positional.join(' '), kind: flags.kind, parentId: flags.parent })); break;
-      case 'put': out(await storage.createItem({ name: positional.join(' '), quantity: flags.qty ? Number(flags.qty) : 1, locationId: flags.in })); break;
-      case 'where': out(await storage.whereIs(positional[0])); break;
-      case 'contents': out(await storage.contents(positional[0])); break;
+      // ── knowledge ingest（RSS/RSSHub → knowledge_item） ───────────────────
+      case 'ingest': out(await ingest({ store, source: flags.source, category: flags.category, limit: num(flags.limit), log: (m) => console.error(m) })); break;
 
-      case 'cc-add': out(await cc.create({
-        card: positional.join(' '), issuer: flags.issuer, applied_on: flags.applied,
-        annual_fee: flags.fee ? Number(flags.fee) : undefined, bonus_deadline: flags['bonus-deadline'],
-      })); break;
-      case 'cc-list': out(await cc.list({ status: flags.status })); break;
-      case 'cc-deadlines': out(await cc.upcomingBonusDeadlines({ days: flags.days ? Number(flags.days) : 30 })); break;
-
-      // notes
-      case 'note-add': out(await notes.create({ title: positional.join(' '), body: typeof flags.body === 'string' ? flags.body : undefined, tags: csv(flags.tags), topics: csv(flags.topics), about: typeof flags.about === 'string' ? flags.about : undefined, family_id: flags.family })); break;
-      case 'note-append': out(await notes.append(positional[0], positional.slice(1).join(' '))); break;
-      case 'note-link': out(await notes.link(positional[0], positional[1], flags.predicate || 'about')); break;
-      case 'note-for': out(await notes.forEntity(positional[0])); break;
-      case 'notes': out(await notes.list({ tag: flags.tag, family_id: flags.family })); break;
-      case 'note-search': out(await notes.search(positional.join(' '), { family_id: flags.family })); break;
-
-      // reading / books
-      case 'book-add': out(await library.addBook({ title: positional.join(' '), author: flags.author, isbn: flags.isbn, year: num(flags.year), publisher: flags.publisher, total_pages: num(flags.pages), status: flags.status, family_id: flags.family })); break;
-      case 'book-status': out(await library.setStatus(positional[0], positional[1], { rating: num(flags.rating), started_on: flags.started, finished_on: flags.finished })); break;
-      case 'book-progress': out(await library.updateProgress(positional[0], Number(positional[1]))); break;
-      case 'book-rate': out(await library.rate(positional[0], Number(positional[1]))); break;
-      case 'reading': out(await library.currentlyReading()); break;
-      case 'books': out(await library.list({ status: flags.status, family_id: flags.family })); break;
-      case 'books-finished': out(await library.finishedInYear(Number(positional[0]))); break;
-
-      // finance
-      case 'acct-add': out(await finance.createAccount({ name: positional.join(' '), kind: flags.kind, institution: flags.institution, currency: flags.currency, last4: flags.last4, account_number: flags['account-number'], family_id: flags.family })); break;
-      case 'txn-add': out(await finance.addTxn({ account_id: flags.account, amount_cents: num(flags['amount-cents']), direction: flags.direction, category: flags.category, merchant: flags.merchant, posted_on: flags['posted-on'], memo: flags.memo, raw_descriptor: flags['raw-descriptor'], currency: flags.currency, family_id: flags.family })); break;
-      case 'txn-list': out(await finance.listTxns({ account_id: flags.account, category: flags.category, from: flags.from, to: flags.to, limit: num(flags.limit) })); break;
-      case 'balance': out(await finance.balance(positional[0])); break;
-      case 'spend': out(await finance.spendByCategory({ from: flags.from, to: flags.to, family_id: flags.family })); break;
-      case 'reveal': out(await finance.reveal(positional[0])); break;
-      case 'acct-reveal': out(await finance.revealAccount(positional[0])); break;
-
-      // knowledge / rss ingest (embed new items right after, so semantic search sees them)
-      case 'ingest': {
-        const summary = await ingest({ store, source: flags.source, category: flags.category, limit: num(flags.limit), log: (m) => console.error(m) });
-        const embedded = await semantic.reindexAll({ type: 'knowledge_item' }).catch(() => ({ indexed: 0 }));
-        out({ ...summary, embedded: embedded.indexed });
-        break;
-      }
-      case 'ki-recent': out(await knowledge.recent({ tag: flags.tag, limit: num(flags.limit) })); break;
-      case 'ki-related': out(await knowledge.related(positional[0], { limit: num(flags.limit) })); break;
-      case 'ki-search': out(await knowledge.search(positional.join(' '), {})); break;
-
-      // knowledge graph
+      // ── knowledge graph ───────────────────────────────────────────────────
       case 'graph-neighbors': out(await graph.neighbors(positional[0], { predicate: flags.predicate, limit: num(flags.limit) })); break;
       case 'graph-expand': out(await graph.expand(positional[0], { depth: flags.depth ? Number(flags.depth) : 1 })); break;
       case 'graph-build': out(await graph.buildSimilarityEdges({})); break;
 
-      // semantic (pgvector) + hybrid retrieval
-      case 'reindex': out(await semantic.reindexAll({ type: flags.type, limit: num(flags.limit) })); break;
-      case 'semantic-search': out(await semantic.semanticSearch(positional.join(' '), { type: flags.type, limit: num(flags.limit) })); break;
-      case 'hybrid-search': out(await semantic.hybridSearch(positional.join(' '), { type: flags.type, limit: num(flags.limit) })); break;
+      // ── migration importers（统一者，而非第三个 silo） ────────────────────
+      case 'import-household': {
+        const { importHousehold } = require('./import/household');
+        out(await importHousehold({ store, dir: flags.dir || process.cwd(), dryRun: !!flags['dry-run'], log: (m) => console.error(m) }));
+        break;
+      }
+      case 'import-rsspool': {
+        const { importRsspool } = require('./import/rsspool');
+        out(await importRsspool({ store, file: positional[0], log: (m) => console.error(m) }));
+        break;
+      }
 
       case 'sync-obsidian': {
         if (!config.obsidianEnabled) { console.error('Obsidian disabled'); break; }
@@ -167,29 +120,31 @@ async function main() {
 }
 
 function printHelp() {
-  console.log(`lifeos — Postgres life/household info store (DB主 + Obsidian镜像)
+  const lines = [
+    'lifeos — Postgres life/household info store (DB主 + Obsidian镜像)',
+    '',
+    '  core:      migrate | stats | search <q> [--type T] | hybrid-search <q> | semantic-search <q> | reindex',
+    '             sync-obsidian | mcp | mcp-http [--port N] [--host H]',
+    '  knowledge: ingest [--source S] [--category C] [--limit N]',
+    '  graph:     graph-neighbors <id> [--predicate P] | graph-expand <id> [--depth N] | graph-build',
+    '  import:    import-household [--dir D] [--dry-run] | import-rsspool <file.json|.jsonl|.db>',
+  ];
+  // Auto-generated from domain manifests / 以下由各领域 manifest 自动生成。
+  const { table, byDomain } = registry.commandTable(null, mockInstances());
+  for (const [domain, names] of Object.entries(byDomain)) {
+    lines.push('', `  [${domain}]`);
+    for (const name of names) lines.push(`    ${table[name].usage.padEnd(72)} ${table[name].desc}`);
+  }
+  lines.push('', 'Set DATABASE_URL (default postgres://lifeos:lifeos@localhost:5432/lifeos).');
+  lines.push('MCP: `mcp` = stdio (client-spawned) · `mcp-http` = long-lived daemon (LIFEOS_MCP_TOKEN to auth).');
+  console.log(lines.join('\n'));
+}
 
-  core:     migrate | stats | search <q> [--type T] | sync-obsidian
-            mcp (stdio) | mcp-http [--port N] [--host H] (daemon)
-  semantic: reindex [--type T] | semantic-search <q> [--type T] | hybrid-search <q>
-  storage:  loc <name> [--kind K] [--parent ID]
-            put <item> [--qty N] [--in LOC_ID] | where <item id> | contents <loc id>
-  credit:   cc-add <card> [--issuer X] [--applied DATE] [--fee N] [--bonus-deadline DATE]
-            cc-list [--status S] | cc-deadlines [--days N]
-  notes:    note-add <title> [--body B] [--tags a,b] [--about ID] | note-append <id> <text>
-            note-link <noteId> <targetId> [--predicate P] | note-for <id> | notes [--tag T] | note-search <q>
-  reading:  book-add <title> [--author A] [--year N] [--status want|reading|finished|abandoned]
-            book-status <id> <status> [--rating N] [--finished DATE] | book-progress <id> <pct>
-            book-rate <id> <n> | reading | books [--status S] | books-finished <year>
-  finance:  acct-add <name> [--kind K] [--institution I] [--last4 N] [--account-number N]
-            txn-add --account ID --amount-cents N --direction debit|credit [--category C] [--merchant M] [--posted-on DATE] [--memo M]
-            txn-list [--account ID] [--category C] [--from DATE] [--to DATE] | balance <acct id>
-            spend [--from DATE] [--to DATE] | reveal <txn id> | acct-reveal <acct id>
-  knowledge: ingest [--source S] [--category C] [--limit N] | ki-recent [--tag T] | ki-related <id> | ki-search <q>
-  graph:    graph-neighbors <id> [--predicate P] | graph-expand <id> [--depth N] | graph-build
-
-Set DATABASE_URL (default postgres://lifeos:lifeos@localhost:5432/lifeos).
-MCP: \`node src/cli.js mcp\` starts a stdio Model Context Protocol server.`);
+/** help 不需要真 store：给 commands() 一个空实例占位。 No store needed for help. */
+function mockInstances() {
+  const out = {};
+  for (const d of registry.DOMAINS) out[d.name] = new Proxy({}, { get: () => () => {} });
+  return out;
 }
 
 main().catch((err) => { console.error(err.stack || err.message); process.exit(1); });

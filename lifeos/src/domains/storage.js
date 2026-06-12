@@ -81,3 +81,27 @@ module.exports = function storageDomain(store) {
     },
   };
 };
+
+// ─── manifest: CLI commands（由 cli.js 经 registry 派生分发） ─────────────────
+module.exports.commands = (d) => ({
+  loc: {
+    desc: '新建存放位置（可嵌套）', usage: 'loc <name> [--kind K] [--parent ID]',
+    run: ({ positional, flags }) => d.createLocation({ name: positional.join(' '), kind: flags.kind, parentId: flags.parent }),
+  },
+  put: {
+    desc: '新建物品（可直接归置）', usage: 'put <item> [--qty N] [--in LOC_ID]',
+    run: ({ positional, flags }) => d.createItem({ name: positional.join(' '), quantity: flags.qty ? Number(flags.qty) : 1, locationId: flags.in }),
+  },
+  place: {
+    desc: '把物品移到某位置', usage: 'place <item id> <location id>',
+    run: ({ positional }) => d.place(positional[0], positional[1]),
+  },
+  where: {
+    desc: '物品在哪（位置链）', usage: 'where <item id>',
+    run: ({ positional }) => d.whereIs(positional[0]),
+  },
+  contents: {
+    desc: '位置里有什么', usage: 'contents <location id>',
+    run: ({ positional }) => d.contents(positional[0]),
+  },
+});

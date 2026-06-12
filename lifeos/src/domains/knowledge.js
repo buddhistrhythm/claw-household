@@ -100,3 +100,10 @@ module.exports = function knowledgeDomain(store) {
 };
 
 module.exports.types = [];
+
+// ─── manifest: CLI commands ───────────────────────────────────────────────────
+module.exports.commands = (d, { num }) => ({
+  'ki-recent': { desc: '最近知识条目', usage: 'ki-recent [--tag T] [--limit N]', run: ({ flags }) => d.recent({ tag: flags.tag, limit: num(flags.limit) }) },
+  'ki-related': { desc: '相关条目（共享标签）', usage: 'ki-related <id> [--limit N]', run: ({ positional, flags }) => d.related(positional[0], { limit: num(flags.limit) }) },
+  'ki-search': { desc: '检索知识条目', usage: 'ki-search <q>', run: ({ positional }) => d.search(positional.join(' '), {}) },
+});

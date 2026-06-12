@@ -212,6 +212,32 @@ async function buildServer(store) {
     async ({ type, limit }) => text(await semantic.reindexAll({ type, limit }))
   );
 
+  // 录入与检索是同一套实体的两个方向：life_capture 把一次观察推进捕获管线
+  // （规则路由→自动落库；低置信/财务→pending 等人工确认，绝不瞎猜）。
+  // Capture and retrieval are two directions over the same store: life_capture
+  // pushes an observation through the capture pipeline (rules first; money and
+  // low-confidence routes park as pending — never guessed into the books).
+  const captureApi = require('../capture')(store);
+  server.tool(
+    'life_capture',
+    '捕获一句话/一次观察进 lifeos（如「garage 加两箱 3 号尿布」）。规则能确定就直接落库，' +
+      '否则进 pending 队列等确认。Capture an observation into lifeos via the routing pipeline.',
+    {
+      text: z.string().describe('要捕获的内容'),
+      hint_domain: z.string().optional().describe('领域提示，如 storage / finance / notes'),
+    },
+    async ({ text: msg, hint_domain }) => {
+      const crypto = require('crypto');
+      const res = await captureApi.ingest({
+        channel: 'mcp', kind: 'text',
+        source_ref: 'mcp:' + crypto.createHash('sha1').update(msg).digest('hex').slice(0, 12) + ':' + Date.now().toString(36),
+        text: msg,
+        hints: hint_domain ? { domain: hint_domain } : undefined,
+      });
+      return text(res);
+    }
+  );
+
   return server;
 }
 

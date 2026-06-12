@@ -22,7 +22,12 @@
 DO $$
 BEGIN
   BEGIN
-    CREATE EXTENSION IF NOT EXISTS vector;
+    -- WITH SCHEMA public 是必须的：否则扩展会装进 search_path 首位的（测试）schema，
+    -- 并在 DROP SCHEMA ... CASCADE 时被连带删除。
+    -- WITH SCHEMA public is load-bearing: without it the extension installs into
+    -- the first schema on search_path (a throwaway test schema) and gets dropped
+    -- with it on DROP SCHEMA ... CASCADE.
+    CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
   EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'lifeos: pgvector unavailable (%); semantic layer disabled', SQLERRM;
   END;

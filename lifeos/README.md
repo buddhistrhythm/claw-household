@@ -65,7 +65,43 @@ node src/cli.js mcp                          # 启动 stdio MCP（agentic 检索
 | notes | `note` | 自由笔记，可 `about` 任意实体 |
 | reading | `book` | 阅读追踪：想读/在读/读完/弃读 + 评分 + 进度 |
 | knowledge | `knowledge_item` | RSS/RSSHub 入库（移植自 rsspool），去重 upsert |
-| (新领域) | … | 加 `type` + `src/domains/<x>.js`（导出 `types`）即可，不改表 |
+| events | `life_event` | 事件溯源 P0：消耗/补货/喂养皆事件，`qty <id>` 折叠出当前量 |
+| meals | `food_ingredient`, `dish`, `meal` | 餐食日记（食材→菜→一餐，`uses`/`serves` 边） |
+| inbox | `capture` | 捕获收件箱（append-only，可溯源，见下「捕获管线」） |
+| (新领域) | … | 一个 `src/domains/<x>.js` 声明 `types`/`commands`/`intents`，registry 派生一切，不改表 |
+
+## 领域 manifest（一次声明，处处派生）
+
+每个领域模块只声明一次自己（`module.exports` 工厂 + `.types` + `.commands` + `.intents`），
+`src/registry.js` 据此派生：**CLI 命令表与帮助文本**（`node src/cli.js help` 全自动生成）、
+**entity_types 注册**、**捕获 Router 的可路由目标**。加领域 = 加一个文件，零接线。
+
+## 捕获管线（录入即产品，见 docs/SPEC-plugins.md）
+
+`Source → Capture(inbox) → Router(规则优先，LLM 兜底) → Intent → entity`
+
+```bash
+node src/cli.js capture-text "加 2 箱 3号尿布 到 车库"   # 规则命中 → 直接落库+归置
+node src/cli.js capture-text "花了 \$12.99 Blue Bottle"  # 财务永不自动入账 → pending
+node src/cli.js captures                                  # 待确认队列（带路由建议）
+node src/cli.js capture-confirm <id> --args '{"account":"Chase Checking"}'
+node src/cli.js capture-serve --secret S   # webhook 源（眼镜/Shortcuts/IM 网关 POST 进来）
+node src/cli.js capture-watch ~/Pictures/glasses   # 监听目录（眼镜照片同步文件夹）
+```
+
+- **确定性优先**：规则能确定就不调模型;设 `ANTHROPIC_API_KEY` 后自由文本走 Claude tool-use 路由。
+- **钱和库存不许瞎猜**：`finance.add_txn` 标记 `confirm:'always'`，永远停在 pending 等确认。
+- **一切可溯源**：落库实体带 `captured_from` 边回指捕获；重复 `source_ref` 自动去重。
+- Meta Ray-Ban 等设备 = 再加一个 Source（语音→IM 网关→webhook；照片→同步目录→watch），核心零改动。
+
+## 迁移（统一者，而非第三个 silo）
+
+```bash
+node src/cli.js import-household --dir ~/家庭管理 [--dry-run]  # 库存/消耗/宝宝日志/餐食 → 实体+事件
+node src/cli.js import-rsspool rsspool-items.json              # rsspool 知识池 → knowledge_item
+```
+幂等：保留源 id（`inv_*`/`ing_*`…），重复运行 created=0;消耗记录变 `life_event`,
+`qty inv_xxx` 即可按事件折叠出当前量。
 
 ## 加密策略（财务）
 
@@ -106,8 +142,14 @@ npm test     # node --test，对真 Postgres 跑，每个文件用随机 schema 
 
 需要可连接的 Postgres（设 `DATABASE_URL`）。CI 里起一个 postgres service 即可。
 
-## 路线（见 SPEC §7）
+## 路线
+
+已落地：HTTP/SSE MCP 常驻（`mcp-http`，bearer token）；pgvector 语义/混合检索
+（`hybrid-search` / `reindex`）；捕获管线 P0+P1；household/rsspool 迁移导入器；
+事件溯源 P0；领域 manifest。剩余：
 
 - 多人实体级可见性（财务 private）。
-- MCP 加 HTTP/SSE transport，让它能作为常驻 compose service。
-- `life_context` 接入向量检索（pgvector）做语义召回，补充全文/图谱信号。
+- FTS 中文分词：`simple` 配置下中文连写串只成一个 token（「3号尿布」搜「尿布」不中）;
+  语义检索可兜底，但应换 zhparser/pg_jieba 或 pg_bigm 根治。
+- 捕获 P2：vision 路由（照片→库存/条码）、IM 机器人 Source（打通眼镜语音路）。
+- 网页 inbox 确认界面（pending 队列的勾选确认）。

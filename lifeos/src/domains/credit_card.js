@@ -97,3 +97,23 @@ module.exports = function creditCardDomain(store) {
     },
   };
 };
+
+// ─── manifest: CLI commands ───────────────────────────────────────────────────
+module.exports.commands = (d) => ({
+  'cc-add': {
+    desc: '记录信用卡申请', usage: 'cc-add <card> [--issuer X] [--applied DATE] [--fee N] [--bonus-deadline DATE]',
+    run: ({ positional, flags }) => d.create({
+      card: positional.join(' '), issuer: flags.issuer, applied_on: flags.applied,
+      annual_fee: flags.fee ? Number(flags.fee) : undefined, bonus_deadline: flags['bonus-deadline'],
+    }),
+  },
+  'cc-status': {
+    desc: '推进申请状态', usage: 'cc-status <id> <planned|applied|approved|denied|cancelled|closed> [--credit-line N]',
+    run: ({ positional, flags }) => d.setStatus(positional[0], positional[1], { credit_line: flags['credit-line'] ? Number(flags['credit-line']) : undefined }),
+  },
+  'cc-list': { desc: '列出申请', usage: 'cc-list [--status S]', run: ({ flags }) => d.list({ status: flags.status }) },
+  'cc-deadlines': {
+    desc: '开卡奖励将到期且未达标', usage: 'cc-deadlines [--days N]',
+    run: ({ flags }) => d.upcomingBonusDeadlines({ days: flags.days ? Number(flags.days) : 30 }),
+  },
+});

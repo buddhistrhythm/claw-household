@@ -1,6 +1,6 @@
 # SPEC — lifeos 插件 / 捕获系统（Capture → Router → Intent）
 
-> 状态：设计稿（v0）。目标是让任意「输入边」（Meta Ray-Ban 眼镜、邮件、Webhook、
+> 状态：**P0+P1 已落地**（`src/capture/`：规则+LLM Router、webhook/watch-folder 两个 Source、pending 确认、MCP `life_capture`；测试见 `test/capture.test.js`）。P2（vision/IM Source）与 P3 未做。原设计稿如下。目标是让任意「输入边」（Meta Ray-Ban 眼镜、邮件、Webhook、
 > 扫码枪、消息机器人、Shortcuts…）都能把现实世界的一句话 / 一张照片，优雅地变成
 > lifeos 里**正确领域的实体**——而不需要为「眼镜×库存」「邮件×记账」这种组合各写一遍。
 

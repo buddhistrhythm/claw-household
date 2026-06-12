@@ -1,19 +1,12 @@
 'use strict';
 
 /**
- * types.js — built-in entity_type registry. Each domain registers its types
- * here (label/icon/domain + a light field schema used for UI + Obsidian
- * frontmatter). New domains either append to CORE_TYPES below, or — preferred —
- * export a `types` array from their domain module, aggregated in DOMAIN_TYPES.
+ * types.js — built-in entity_type registry. Core types live here; each domain
+ * module exports its own `types`, aggregated via src/registry.js (the single
+ * domain manifest). 核心类型在此；领域类型由各 domain 模块导出、经 registry 聚合。
  */
 
-// Domain modules that introduce their own entity types export `module.exports.types`.
-const DOMAIN_TYPES = [].concat(
-  require('../domains/library').types || [],   // book
-  require('../domains/finance').types || [],   // finance_account, finance_txn
-  require('../domains/notes').types || [],     // (none yet — `note` is core)
-  require('../domains/knowledge').types || [], // (none yet — `knowledge_item` is core)
-);
+const { allTypes } = require('../registry');
 
 const CORE_TYPES = [
   { type: 'item', domain: 'storage', label: '物品', icon: '📦',
@@ -37,8 +30,8 @@ const CORE_TYPES = [
     description: 'RSS / 收藏 / 剪藏（rsspool 入口）' },
 ];
 
-// Full registry = core + everything the domain modules contribute.
-const BUILTIN_TYPES = [...CORE_TYPES, ...DOMAIN_TYPES];
+// Full registry = core + everything the domain manifests contribute.
+const BUILTIN_TYPES = [...CORE_TYPES, ...allTypes()];
 
 async function seedTypes(db) {
   for (const t of BUILTIN_TYPES) {

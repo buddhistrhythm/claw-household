@@ -68,3 +68,20 @@ module.exports = function notesDomain(store) {
 
 // `note` already exists as a built-in type — introduce no new types.
 module.exports.types = [];
+
+// ─── manifest: CLI commands ───────────────────────────────────────────────────
+module.exports.commands = (d, { csv }) => ({
+  'note-add': {
+    desc: '新建笔记（可 about 任意实体）', usage: 'note-add <title> [--body B] [--tags a,b] [--about ID]',
+    run: ({ positional, flags }) => d.create({
+      title: positional.join(' '), body: typeof flags.body === 'string' ? flags.body : undefined,
+      tags: csv(flags.tags), topics: csv(flags.topics),
+      about: typeof flags.about === 'string' ? flags.about : undefined, family_id: flags.family,
+    }),
+  },
+  'note-append': { desc: '追加一段', usage: 'note-append <id> <text>', run: ({ positional }) => d.append(positional[0], positional.slice(1).join(' ')) },
+  'note-link': { desc: '链接到实体', usage: 'note-link <noteId> <targetId> [--predicate P]', run: ({ positional, flags }) => d.link(positional[0], positional[1], flags.predicate || 'about') },
+  'note-for': { desc: '某实体的全部笔记', usage: 'note-for <entityId>', run: ({ positional }) => d.forEntity(positional[0]) },
+  notes: { desc: '列出笔记', usage: 'notes [--tag T]', run: ({ flags }) => d.list({ tag: flags.tag, family_id: flags.family }) },
+  'note-search': { desc: '检索笔记', usage: 'note-search <q>', run: ({ positional, flags }) => d.search(positional.join(' '), { family_id: flags.family }) },
+});

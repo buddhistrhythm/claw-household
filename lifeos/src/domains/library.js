@@ -110,3 +110,23 @@ module.exports.types = [
       started_on: 'date', finished_on: 'date',
     } } },
 ];
+
+// ─── manifest: CLI commands ───────────────────────────────────────────────────
+module.exports.commands = (d, { num }) => ({
+  'book-add': {
+    desc: '加一本书', usage: 'book-add <title> [--author A] [--year N] [--pages N] [--status want|reading|finished|abandoned]',
+    run: ({ positional, flags }) => d.addBook({
+      title: positional.join(' '), author: flags.author, isbn: flags.isbn, year: num(flags.year),
+      publisher: flags.publisher, total_pages: num(flags.pages), status: flags.status, family_id: flags.family,
+    }),
+  },
+  'book-status': {
+    desc: '推进阅读状态（自动盖时间戳）', usage: 'book-status <id> <status> [--rating N] [--started DATE] [--finished DATE]',
+    run: ({ positional, flags }) => d.setStatus(positional[0], positional[1], { rating: num(flags.rating), started_on: flags.started, finished_on: flags.finished }),
+  },
+  'book-progress': { desc: '更新进度%', usage: 'book-progress <id> <pct>', run: ({ positional }) => d.updateProgress(positional[0], Number(positional[1])) },
+  'book-rate': { desc: '评分', usage: 'book-rate <id> <n>', run: ({ positional }) => d.rate(positional[0], Number(positional[1])) },
+  reading: { desc: '在读清单', usage: 'reading', run: () => d.currentlyReading() },
+  books: { desc: '列出书', usage: 'books [--status S]', run: ({ flags }) => d.list({ status: flags.status, family_id: flags.family }) },
+  'books-finished': { desc: '某年读完的书', usage: 'books-finished <year>', run: ({ positional }) => d.finishedInYear(Number(positional[0])) },
+});

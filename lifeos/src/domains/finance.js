@@ -181,3 +181,30 @@ module.exports.types = [
       merchant: 'text', account_id: 'text', posted_on: 'date',
     } } },
 ];
+
+// ─── manifest: CLI commands ───────────────────────────────────────────────────
+module.exports.commands = (d, { num }) => ({
+  'acct-add': {
+    desc: '新建账户（敏感账号加密）', usage: 'acct-add <name> [--kind K] [--institution I] [--last4 N] [--account-number N]',
+    run: ({ positional, flags }) => d.createAccount({
+      name: positional.join(' '), kind: flags.kind, institution: flags.institution,
+      currency: flags.currency, last4: flags.last4, account_number: flags['account-number'], family_id: flags.family,
+    }),
+  },
+  'txn-add': {
+    desc: '记一笔交易（memo 加密）', usage: 'txn-add --account ID --amount-cents N --direction debit|credit [--category C] [--merchant M] [--posted-on DATE] [--memo M]',
+    run: ({ flags }) => d.addTxn({
+      account_id: flags.account, amount_cents: num(flags['amount-cents']), direction: flags.direction,
+      category: flags.category, merchant: flags.merchant, posted_on: flags['posted-on'],
+      memo: flags.memo, raw_descriptor: flags['raw-descriptor'], currency: flags.currency, family_id: flags.family,
+    }),
+  },
+  'txn-list': {
+    desc: '交易流水（新→旧）', usage: 'txn-list [--account ID] [--category C] [--from DATE] [--to DATE]',
+    run: ({ flags }) => d.listTxns({ account_id: flags.account, category: flags.category, from: flags.from, to: flags.to, limit: num(flags.limit) }),
+  },
+  balance: { desc: '账户余额（按币种分组）', usage: 'balance <acct id> [--currency C]', run: ({ positional, flags }) => d.balance(positional[0], { currency: flags.currency }) },
+  spend: { desc: '区间支出按品类汇总', usage: 'spend [--from DATE] [--to DATE] [--currency C]', run: ({ flags }) => d.spendByCategory({ from: flags.from, to: flags.to, family_id: flags.family, currency: flags.currency }) },
+  reveal: { desc: '解密交易敏感字段（唯一出口）', usage: 'reveal <txn id>', run: ({ positional }) => d.reveal(positional[0]) },
+  'acct-reveal': { desc: '解密账户敏感字段', usage: 'acct-reveal <acct id>', run: ({ positional }) => d.revealAccount(positional[0]) },
+});
