@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8" />
+  <!-- mobile-first viewport / 移动优先视口 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0c10" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="lifeos" />
+  <title>lifeos</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <!-- iOS 主屏图标（用 SVG data URI，避免引入二进制资源） -->
+  <link rel="apple-touch-icon"
+        href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20192%20192%27%3E%3Crect%20width%3D%27192%27%20height%3D%27192%27%20rx%3D%2742%27%20fill%3D%27%230b0c10%27%2F%3E%3Ctext%20x%3D%2796%27%20y%3D%27130%27%20text-anchor%3D%27middle%27%20font-size%3D%27110%27%20font-family%3D%27sans-serif%27%3E%F0%9F%91%B6%3C%2Ftext%3E%3C%2Fsvg%3E" />
+  <link rel="stylesheet" href="/main.css" />
+</head>
+<body>
+  <main id="app" aria-live="polite">
+    <!-- Baby tab — the hero. / 宝宝页：核心功能 -->
+    <section id="view-baby" class="view">
+      <header class="view-h">
+        <h1>宝宝</h1>
+        <p class="muted">大按钮一按，看「为啥哭了」的推理。</p>
+      </header>
+      <button id="cry-btn" class="hero-btn" type="button">
+        <span class="hero-emoji">👶</span>
+        <span class="hero-label">宝宝哭了</span>
+        <span class="hero-sub">tap to infer · 按一下分析</span>
+      </button>
+      <div id="cry-result" class="cards"></div>
+      <div class="quick-row" aria-label="quick log / 快速记录">
+        <button class="chip" data-quick="喂了 120ml">🍼 喂奶</button>
+        <button class="chip" data-quick="换尿布 wet">💩 换尿布</button>
+        <button class="chip" data-quick="睡了 30 分钟">😴 睡觉</button>
+      </div>
+      <div id="quick-form" class="quick-form" hidden>
+        <input id="quick-input" type="text" inputmode="text" />
+        <button id="quick-send" type="button">发送</button>
+        <button id="quick-cancel" type="button" class="muted-btn">取消</button>
+      </div>
+      <div id="quick-status" class="status-line"></div>
+    </section>
+
+    <!-- Inbox tab. / 收件 -->
+    <section id="view-inbox" class="view" hidden>
+      <header class="view-h">
+        <h1>收件</h1>
+        <p class="muted">等待人工确认的捕获。</p>
+      </header>
+      <div id="inbox-list" class="list"></div>
+    </section>
+
+    <!-- Find tab. / 找 -->
+    <section id="view-search" class="view" hidden>
+      <header class="view-h">
+        <h1>找</h1>
+      </header>
+      <div class="search-row">
+        <input id="q" type="search" placeholder="搜索 anything…" inputmode="search" />
+        <button id="q-go" type="button">搜</button>
+      </div>
+      <div id="search-list" class="list"></div>
+    </section>
+
+    <!-- Stats tab. / 状态 -->
+    <section id="view-stats" class="view" hidden>
+      <header class="view-h">
+        <h1>状态</h1>
+      </header>
+      <div id="stats-body" class="stats"></div>
+    </section>
+  </main>
+
+  <!-- Bottom tab bar / 底部 Tab -->
+  <nav id="tabs" class="tabs" role="tablist">
+    <a class="tab" href="#baby" data-tab="baby" role="tab"><span>👶</span><em>宝宝</em></a>
+    <a class="tab" href="#inbox" data-tab="inbox" role="tab"><span>📥</span><em>收件</em></a>
+    <a class="tab" href="#search" data-tab="search" role="tab"><span>🔎</span><em>找</em></a>
+    <a class="tab" href="#stats" data-tab="stats" role="tab"><span>📊</span><em>状态</em></a>
+  </nav>
+
+  <script src="/main.js" defer></script>
+</body>
+</html>
