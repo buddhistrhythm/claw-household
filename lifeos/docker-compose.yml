@@ -93,6 +93,49 @@ services:
       timeout: 5s
       retries: 3
 
+  # ── 常驻：PWA + JSON API（手机入口；宝宝哭推断/收件/检索） ──────────────
+  web:
+    <<: *app
+    command: ["web"]
+    environment:
+      DATABASE_URL: postgres://lifeos:lifeos@db:5432/lifeos
+      LIFEOS_OBSIDIAN_VAULT: /vault
+      LIFEOS_SECRET_KEY: ${LIFEOS_SECRET_KEY:-}
+      LIFEOS_WEB_PORT: "8850"
+      LIFEOS_WEB_HOST: "0.0.0.0"               # 容器内监听全网卡，靠端口发布 + token 控制暴露
+      LIFEOS_WEB_TOKEN: ${LIFEOS_WEB_TOKEN:-}  # 发布到 localhost 之外（含 Chrome 扩展远程）务必设置
+    ports:
+      - "127.0.0.1:${LIFEOS_WEB_PORT:-8850}:8850"  # 默认只发布到宿主 localhost；走 tailscale 才出网
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8850/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── 可选：Tailscale 边车，把 web 挂到 tailnet（手机 App 访问入口） ──────
+  # 未设 TS_AUTHKEY 时通过 profile 跳过。启用：
+  #   TS_AUTHKEY=tskey-... LIFEOS_WEB_TOKEN=... docker compose --profile tailnet up -d
+  # 然后手机在同一 tailnet 打开 https://lifeos.<tailnet>.ts.net （自动 HTTPS，不开公网端口）。
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: ${TS_HOSTNAME:-lifeos}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-lifeos}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_SERVE_CONFIG: /config/serve.json     # 把 tailnet:443 反代到 compose 内 web:8850
+    volumes:
+      - ts_state:/var/lib/tailscale
+      - ./config/tailscale-serve.json:/config/serve.json:ro
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    depends_on: [web]
+    restart: unless-stopped
+    profiles: ["tailnet"]
+
 volumes:
   pgdata:
   vault:
+  ts_state:

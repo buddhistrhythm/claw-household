@@ -19,16 +19,17 @@ const DOMAINS = [
   { name: 'library', mod: require('./domains/library') },
   { name: 'finance', mod: require('./domains/finance') },
   { name: 'knowledge', mod: require('./domains/knowledge') },
+  { name: 'events', mod: require('./domains/events') },
+  { name: 'meals', mod: require('./domains/meals') },
+  { name: 'baby', mod: require('./domains/baby') },
+  { name: 'capture', mod: require('./capture') },
 ];
 
-// 容错引入：这些模块在分支构建期间可能尚未存在。
-// Tolerant requires: present once their feature lands; registry stays the only list.
-for (const [name, path] of [
-  ['events', './domains/events'],
-  ['meals', './domains/meals'],
-  ['capture', './capture'],
-]) {
-  try { DOMAINS.push({ name, mod: require(path) }); } catch { /* not landed yet */ }
+// 第三方/可选领域的接入缝（运行时动态插件，SPEC-plugins §1.6）。目前为空；
+// 未来在此按允许清单 require 外部模块即可，registry 仍是唯一登记处。
+// Seam for optional / third-party domains (runtime plugins). Empty for now.
+for (const [name, path] of []) {
+  try { DOMAINS.push({ name, mod: require(path) }); } catch { /* not present */ }
 }
 
 /** 小工具，传给各 domain 的 commands() 当第二参。 Arg helpers for command runners. */

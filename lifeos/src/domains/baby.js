@@ -96,6 +96,17 @@ const PERSONAL_BASELINE = {
   MAX_FEED_SAMPLES: 20,
   MAX_WAKE_SAMPLES: 10,
   MAX_DIAPER_SAMPLES: 20,
+  // 醒着窗上限（分钟）：超过此值的「间隔」几乎必是夜觉/漏记的缺口，不是真清醒窗，
+  // 计算个人 wake-window 时先剔除，否则 median 会被一段缺口拉到几百上千分钟，
+  // 反而让「困了」分数永远算不出来（危险方向）。
+  // Wake-gap ceiling: a gap longer than this is almost certainly overnight or a
+  // missing-nap logging hole, NOT a real continuous awake window. Drop such gaps
+  // before taking the median — otherwise one hole inflates the personal wake
+  // window to hundreds/thousands of minutes and silently kills the sleepy signal.
+  WAKE_GAP_CEILING_MIN: 420,
+  // 个人 wake-window 相对群体表的可信上限倍数；超出则判为数据噪声，回退群体表。
+  // Sanity clamp: reject a personal wake window beyond this × the age-table value.
+  WAKE_SANITY_MULT: 2.5,
 };
 
 // ─── PATTERN constants（时间-of-day 圈昼夜节律层 / circadian pattern layer）─
@@ -221,51 +232,59 @@ function recentWakeWindowsMin(sleeps, cap) {
     const wokeAt = prevStart + dur * 60000;
     const nextStart = asDate(next.occurred_at).getTime();
     const gap = (nextStart - wokeAt) / 60000;
-    if (Number.isFinite(gap) && gap > 0) gaps.push(gap);
+    // 剔除夜觉/漏记造成的超长缺口（见 WAKE_GAP_CEILING_MIN）。
+    // Drop overnight / missing-data holes so they don't poison the median.
+    if (Number.isFinite(gap) && gap > 0 && gap <= PERSONAL_BASELINE.WAKE_GAP_CEILING_MIN) {
+      gaps.push(gap);
+    }
   }
   return gaps.slice(-Math.max(1, cap | 0));
 }
 
 /**
- * Time-of-day pattern: count days (over the last PATTERN_DAYS days, NOT
- * counting today) where there is at least one event of `verb` within
- * ±PATTERN.WINDOW_MIN of `at`'s clock-of-day.
+ * Time-of-day pattern: for each prior day d in [1..PATTERN.DAYS], we look at
+ * events whose occurred_at falls in the window `at - d*DAY ± WINDOW_MIN`.
  *
- * Returns { days_with_data, days_with_hit, ratio, hits_total }.
+ *   days_with_data — count of prior days that have ANY event in their window
+ *                    (denominator — "how many days we even have data for")
+ *   days_with_hit  — count of prior days where at least one matching `verb`
+ *                    event landed in the window (numerator)
+ *   ratio          — days_with_hit / days_with_data
+ *
+ * 这样 ratio 真的反映「在这个钟点 verb 发生的频率」，而不被「最近活动多」拉偏。
+ * The ratio reflects how often THIS verb occurs at this clock-time on days
+ * when we have data at all, so high-activity days don't skew the denominator.
  */
 function timeOfDayHits(events, at, verb) {
   const atDate = asDate(at) || new Date();
   const atMs = atDate.getTime();
   const W = PATTERN.WINDOW_MIN * 60000;
-  // We bucket events by "day offset" (1..PATTERN_DAYS) relative to today.
-  // day offset = floor((at - event.occurred_at) / DAY_MS), only counting offsets in [1..DAYS].
-  const daysWithData = new Set();
-  const daysWithHit = new Set();
+  const dwd = new Set();
+  const dwh = new Set();
   let hitsTotal = 0;
   for (const e of events) {
     const d = asDate(e.occurred_at);
     if (!d) continue;
     const deltaMs = atMs - d.getTime();
     if (deltaMs <= 0) continue;
-    const offset = Math.floor(deltaMs / DAY_MS) + 1; // event from yesterday → offset=1
-    if (offset < 1 || offset > PATTERN.DAYS) continue;
-    daysWithData.add(offset);
-    // Same-clock comparison: compare the event's clock-time to at's clock-time.
-    // We do this by SHIFTING the event forward by `offset` whole days and
-    // measuring |shifted - at| against the window.
-    const shifted = d.getTime() + offset * DAY_MS;
-    const drift = Math.abs(shifted - atMs);
-    if (drift <= W && (e.data && e.data.verb === verb)) {
-      daysWithHit.add(offset);
+    // Which prior day does this event fall in (clock-of-day window)?
+    // Nearest-day match: round (deltaMs / DAY) to the closest integer; if the
+    // residual is within ±W, the event is "at this clock-time on day k".
+    const dayFloat = deltaMs / DAY_MS;
+    const k = Math.round(dayFloat);
+    if (k < 1 || k > PATTERN.DAYS) continue;
+    const residualMs = Math.abs(deltaMs - k * DAY_MS);
+    if (residualMs > W) continue;
+    dwd.add(k);
+    if (e.data && e.data.verb === verb) {
+      dwh.add(k);
       hitsTotal += 1;
     }
   }
-  const dwd = daysWithData.size;
-  const dwh = daysWithHit.size;
   return {
-    days_with_data: dwd,
-    days_with_hit: dwh,
-    ratio: dwd > 0 ? dwh / dwd : 0,
+    days_with_data: dwd.size,
+    days_with_hit: dwh.size,
+    ratio: dwd.size > 0 ? dwh.size / dwd.size : 0,
     hits_total: hitsTotal,
   };
 }
@@ -548,8 +567,14 @@ module.exports = function babyDomain(store) {
         ? { value: Math.round(median(feedGaps)), sample: feedGaps.length, source: 'personal' }
         : { value: typicalFeedTable, sample: feedGaps.length, source: 'age_table' };
 
-      const wakeBaseline = (wakeGaps.length >= PERSONAL_BASELINE.MIN_WAKE_SAMPLES)
-        ? { value: Math.round(median(wakeGaps)), sample: wakeGaps.length, source: 'personal' }
+      // 个人 wake-window 还要过一道合理性闸：即便样本够，median 仍可能被噪声拉高，
+      // 超过群体表 WAKE_SANITY_MULT 倍就判为不可信，回退群体表（source 标 age_table）。
+      // Even with enough samples, clamp an implausible personal median back to the
+      // age table so a noisy baseline can never silently disable the sleepy signal.
+      const wakePersonal = Math.round(median(wakeGaps));
+      const wakeBaseline = (wakeGaps.length >= PERSONAL_BASELINE.MIN_WAKE_SAMPLES
+        && wakePersonal <= baseWakeWindow * PERSONAL_BASELINE.WAKE_SANITY_MULT)
+        ? { value: wakePersonal, sample: wakeGaps.length, source: 'personal' }
         : { value: baseWakeWindow, sample: wakeGaps.length, source: 'age_table' };
 
       const diaperBaseline = (diaperGaps.length >= PERSONAL_BASELINE.MIN_DIAPER_SAMPLES)

@@ -68,6 +68,7 @@ node src/cli.js mcp                          # 启动 stdio MCP（agentic 检索
 | events | `life_event` | 事件溯源 P0：消耗/补货/喂养皆事件，`qty <id>` 折叠出当前量 |
 | meals | `food_ingredient`, `dish`, `meal` | 餐食日记（食材→菜→一餐，`uses`/`serves` 边） |
 | inbox | `capture` | 捕获收件箱（append-only，可溯源，见下「捕获管线」） |
+| baby | `baby` | 宝宝档案 + 喂奶/换尿布/睡眠事件 + **透明的「为什么哭」推断**（见下） |
 | (新领域) | … | 一个 `src/domains/<x>.js` 声明 `types`/`commands`/`intents`，registry 派生一切，不改表 |
 
 ## 领域 manifest（一次声明，处处派生）
@@ -102,6 +103,30 @@ node src/cli.js import-rsspool rsspool-items.json              # rsspool 知识�
 ```
 幂等：保留源 id（`inv_*`/`ing_*`…），重复运行 created=0;消耗记录变 `life_event`,
 `qty inv_xxx` 即可按事件折叠出当前量。
+
+## 手机端：Web PWA + 宝宝哭推断 + Tailscale
+
+`node src/cli.js web`（compose 里的 `web` 服务）起一个移动端优先的 PWA + JSON API：
+四个 Tab——**宝宝**（大按钮「👶 宝宝哭了」）/ **收件**（待确认捕获）/ **找**（混合检索）/ **状态**。
+加到手机主屏即有 App 图标(`manifest.webmanifest` + service worker，无需应用商店)。
+
+- **「为什么哭」是确定性的可解释推断,不是黑盒**:对 {困了/饿了/要换尿布/想玩} 打分,
+  每个候选展开都列出**信号 + 数字依据**(`POST /api/baby/cry`)。三层叠加:
+  ① last-event(距上次喂/醒了多久 vs 月龄 wake-window);
+  ② **个人基线**(最近 7 天该宝宝的喂奶间隔/清醒窗中位数,够样本就覆盖群体表);
+  ③ **时间-of-day 圈昼夜节律 + 趋势**(「过去 7 天此时 5/7 在睡」「最近喂量在降」)。
+  例:不止「困了 72%」,而是「困了 72% · 已醒 105min(个人均值 95min) · 此时 7 天 5 天在睡」。
+- **手机访问走 Tailscale**(compose 的 `tailscale` 边车,`--profile tailnet` 启用):
+  设 `TS_AUTHKEY` 后 `tailscale serve` 把 `https://lifeos.<tailnet>.ts.net` 反代到 `web:8850`,
+  自动 HTTPS、不开公网端口;再叠 `LIFEOS_WEB_TOKEN` 做 bearer 鉴权。不设 `TS_AUTHKEY` 则边车跳过、仅本机。
+
+## Chrome 扩展：批量录信用卡 offer（又一个 Source）
+
+`extensions/chrome-cc-offers/`(Load unpacked)。在 doctorofcredit 等 offer 页点扩展 →
+抓取页面文本 POST 到 `/api/captures`(hints.kind=`cc_offers`)→ 规则确定性路由到
+`credit_card.bulk_offers` → 先正则抽取(`ANTHROPIC_API_KEY` 有则 LLM 兜底)→ 批量建 N 条
+`status:'planned'` 的信用卡申请,每条带 `Source:<url>` 与 `captured_from` 边,在网页**收件** Tab 复核。
+**扩展不进核心一行**——它只是 N+1 个 Source 里的一个,印证「插件即接入点」。
 
 ## 加密策略（财务）
 

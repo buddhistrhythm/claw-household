@@ -24,7 +24,16 @@ const sha1 = (s) => crypto.createHash('sha1').update(String(s)).digest('hex');
 
 module.exports = function capture(store, { llm } = {}) {
   const { entities, relations } = store;
-  const intents = buildIntents(store);
+  // 路由目标 = capture 自带的基础 Intent ∪ 各领域 manifest 声明的 Intent（如 baby.*）。
+  // 懒加载 registry 以避开 registry→capture 的 require 环；调用 capture(store) 时
+  // registry 早已完成加载。Router targets = base intents ∪ domain-declared intents.
+  const baseIntents = buildIntents(store);
+  let intents = baseIntents;
+  try {
+    const declared = require('../registry').allIntents(store);
+    const have = new Set(baseIntents.map((i) => i.name));
+    intents = baseIntents.concat(declared.filter((i) => i && !have.has(i.name)));
+  } catch { /* registry 不可用时仅用基础 Intent / base intents only */ }
   // 未显式注入 llm 时，按环境自动启用 Anthropic 路由（无 key = 纯规则 + pending）。
   // Default LLM from env when not injected; without a key we degrade to rules-only.
   if (llm === undefined && process.env.ANTHROPIC_API_KEY) {

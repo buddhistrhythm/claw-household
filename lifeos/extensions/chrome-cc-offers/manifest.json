@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "lifeos · CC offers",
+  "version": "0.1.0",
+  "description": "Bulk-add credit card sign-up offers from any page (DoC, FrequentMiler, issuer pages, churning subreddits) into your lifeos inbox.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Send page to lifeos"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": ["<all_urls>"]
+}

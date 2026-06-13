@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>lifeos · CC offers — Options</title>
+  <link rel="stylesheet" href="popup.css" />
+  <style>
+    body { width: 460px; }
+    label { display: block; font-size: 12px; margin: 12px 0 4px; color: var(--muted); }
+    input {
+      width: 100%; padding: 8px; font: 13px ui-monospace, Menlo, monospace;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); color: var(--fg);
+    }
+    .row { margin-bottom: 8px; }
+    .ok { color: #1aa260; font-size: 12px; margin-top: 6px; min-height: 14px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>lifeos · CC offers — Options</h1>
+    <p class="muted small">Point this extension at your lifeos web endpoint.</p>
+  </header>
+
+  <main>
+    <div class="row">
+      <label for="endpoint">Endpoint URL</label>
+      <input id="endpoint" type="url" placeholder="http://127.0.0.1:8850" />
+    </div>
+    <div class="row">
+      <label for="token">Token (LIFEOS_WEB_TOKEN — optional)</label>
+      <input id="token" type="password" placeholder="paste token" />
+    </div>
+    <button class="primary" id="save">Save</button>
+    <p class="ok" id="ok"></p>
+    <p class="muted small">
+      Tip: on a Tailscale Magic-DNS setup the endpoint looks like
+      <code>https://lifeos.&lt;tailnet&gt;.ts.net</code>. Locally,
+      <code>http://127.0.0.1:8850</code> works once <code>node src/cli.js web</code> is running.
+    </p>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

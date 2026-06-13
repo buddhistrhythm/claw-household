@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Send to lifeos</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>lifeos · CC offers</h1>
+    <p id="title" class="muted">Loading page…</p>
+    <p id="url" class="muted small"></p>
+  </header>
+
+  <main>
+    <div id="config-warning" class="warn hidden">
+      Endpoint or token not configured.
+      <a href="#" id="open-options">Open options →</a>
+    </div>
+
+    <label for="text" class="label">Page text (editable — trim irrelevant junk)</label>
+    <textarea id="text" placeholder="Page text will appear here…" rows="14"></textarea>
+
+    <button id="send" class="primary" disabled>Send to lifeos</button>
+
+    <section id="result" class="result hidden">
+      <div id="result-summary"></div>
+      <ul id="result-list"></ul>
+      <div id="result-detail" class="small muted"></div>
+    </section>
+  </main>
+
+  <footer>
+    <a href="#" id="open-options-footer" class="small">Options</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "TCP": { "443": { "HTTPS": true } },
+  "Web": {
+    "${TS_HOSTNAME}:443": {
+      "Handlers": { "/": { "Proxy": "http://web:8850" } }
+    }
+  }
+}

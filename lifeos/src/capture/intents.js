@@ -18,6 +18,7 @@ const { z } = require('zod');
 const storageDomain = require('../domains/storage');
 const notesDomain = require('../domains/notes');
 const financeDomain = require('../domains/finance');
+const { creditCardBulkOffersIntent } = require('./extractors/cc_offers');
 
 /** 去掉 undefined 字段，让 args 干净可序列化。 */
 function compact(obj) {
@@ -206,5 +207,8 @@ module.exports = function buildIntents(store) {
         });
       },
     },
+
+    // ── credit_card.bulk_offers — 批量入库 CC offer（Chrome 扩展驱动） ──
+    creditCardBulkOffersIntent(store),
   ];
 };

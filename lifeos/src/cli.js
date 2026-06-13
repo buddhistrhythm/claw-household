@@ -52,6 +52,13 @@ async function main() {
       host: typeof flags.host === 'string' ? flags.host : undefined,
     });
   }
+  // PWA + JSON API daemon (mobile entry; behind Tailscale in compose).
+  if (cmd === 'web') {
+    return require('./web/server').startWebMain({
+      port: flags.port ? Number(flags.port) : undefined,
+      host: typeof flags.host === 'string' ? flags.host : undefined,
+    });
+  }
 
   const store = await createStore();
   const domains = registry.instantiate(store);
@@ -124,7 +131,7 @@ function printHelp() {
     'lifeos — Postgres life/household info store (DB主 + Obsidian镜像)',
     '',
     '  core:      migrate | stats | search <q> [--type T] | hybrid-search <q> | semantic-search <q> | reindex',
-    '             sync-obsidian | mcp | mcp-http [--port N] [--host H]',
+    '             sync-obsidian | mcp | mcp-http [--port N] [--host H] | web [--port N] [--host H]',
     '  knowledge: ingest [--source S] [--category C] [--limit N]',
     '  graph:     graph-neighbors <id> [--predicate P] | graph-expand <id> [--depth N] | graph-build',
     '  import:    import-household [--dir D] [--dry-run] | import-rsspool <file.json|.jsonl|.db>',
