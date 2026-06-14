@@ -77,6 +77,20 @@ node src/cli.js mcp                          # 启动 stdio MCP（agentic 检索
 `src/registry.js` 据此派生：**CLI 命令表与帮助文本**（`node src/cli.js help` 全自动生成）、
 **entity_types 注册**、**捕获 Router 的可路由目标**。加领域 = 加一个文件，零接线。
 
+## 运行时插件（第三方扩展，见 plugins/README.md）
+
+第三方无需改 registry 即可扩展 lifeos，两条路（`node src/cli.js plugins` 看状态）：
+
+- **进程内（允许清单）**：`config/plugins.json` 里 `enabled` 的模块在加载期被 `require`，
+  与内置领域**同契约**（factory + `types`/`commands`/`intents`），自动获得 CLI/路由/类型/MCP。
+  参考模板 `plugins/water.js`（喝水追踪）。安全默认 = **白名单、默认全关**；进程内插件以**完全信任**
+  运行（无沙箱），只启用你信任的代码。坏插件被 loader 容错隔离，不连累其它。
+- **跨进程（MCP server）**：配置项 `kind:'mcp'`（`command` 跑 stdio 子进程，或 `url` 连 HTTP）。
+  lifeos 当 **MCP client** 连上去，把它的 tool 转成 Intent：tool 的 JSON Schema 直接当入参，
+  `run` 调远程 tool、**结果包成 `plugin_result` 实体**（带 `captured_from` 溯源）。外部代码**永不碰 DB**，
+  默认 `confirm:'always'`——必须人工确认才真正调用。由 `registry.initMcpPlugins()` 在 web/mcp-http/mcp
+  常驻入口启动时连接（best-effort，坏插件只记录不致命）。
+
 ## 捕获管线（录入即产品，见 docs/SPEC-plugins.md）
 
 `Source → Capture(inbox) → Router(规则优先，LLM 兜底) → Intent → entity`

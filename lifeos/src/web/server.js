@@ -132,6 +132,10 @@ async function startWeb({
   const ownStore = !store;
   if (!store) store = await createStore();
 
+  // 连接跨进程 MCP 插件（best-effort），要在建 captureApi 前，让其 Intent 进入路由。
+  // Connect MCP plugins BEFORE building captureApi so their intents join the router.
+  await require('../registry').initMcpPlugins().catch(() => {});
+
   const captureApi = captureFactory(store);
   const semantic = semanticFactory(store);
 
@@ -356,6 +360,7 @@ async function startWeb({
 
   async function close() {
     await new Promise((resolve) => server.close(resolve));
+    await require('../registry').closeMcpPlugins().catch(() => {});
     if (ownStore) await store.close();
   }
 

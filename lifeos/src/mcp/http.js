@@ -86,6 +86,9 @@ async function startHttp({
   const ownStore = !store;
   if (!store) store = await createStore();
 
+  // 连接跨进程 MCP 插件（best-effort），其 tool 成为捕获 Intent（life_capture 用得到）。
+  await require('../registry').initMcpPlugins().catch(() => {});
+
   // sessionId -> transport 映射（stateful 会话）。
   const transports = new Map();
 
@@ -176,6 +179,7 @@ async function startHttp({
     }
     transports.clear();
     await new Promise((resolve) => server.close(resolve));
+    await require('../registry').closeMcpPlugins().catch(() => {});
     if (ownStore) await store.close();
   }
 

@@ -1,6 +1,6 @@
 # SPEC — lifeos 插件 / 捕获系统（Capture → Router → Intent）
 
-> 状态：**P0+P1 已落地**（`src/capture/`：规则+LLM Router、webhook/watch-folder 两个 Source、pending 确认、MCP `life_capture`；测试见 `test/capture.test.js`）。P2（vision/IM Source）与 P3 未做。原设计稿如下。目标是让任意「输入边」（Meta Ray-Ban 眼镜、邮件、Webhook、
+> 状态：**P0+P1 + P3 运行时插件已落地**（`src/capture/`：规则+LLM Router、webhook/watch-folder 两个 Source、pending 确认、MCP `life_capture`；`src/plugins/`：进程内允许清单加载器 + 跨进程 MCP 桥，见 `plugins/README.md`，测试 `test/capture.test.js` / `test/plugins-*.test.js`）。P2（vision/IM Source）未做。原设计稿如下。目标是让任意「输入边」（Meta Ray-Ban 眼镜、邮件、Webhook、
 > 扫码枪、消息机器人、Shortcuts…）都能把现实世界的一句话 / 一张照片，优雅地变成
 > lifeos 里**正确领域的实体**——而不需要为「眼镜×库存」「邮件×记账」这种组合各写一遍。
 
@@ -150,7 +150,11 @@ interface Intent {
   + 确定性规则路由 + `storage.add_item` Intent + `pending` 队列 + 测试。无需任何外部依赖。
 - **P1**:LLM 路由(Anthropic tool-use,文本)+ `finance.add_txn` / `baby.*` Intents + MCP `life_capture`。
 - **P2**:vision 路由(照片→库存/条码)+ IM 机器人 Source(WhatsApp/Telegram)→ 打通眼镜语音/照片两路。
-- **P3**:插件跨进程化(第三方插件作为独立 MCP server 接入)+ 网页 inbox 确认界面。
+- **P3 ✅(已落地)**:运行时动态插件——**进程内允许清单**(`config/plugins.json` + `src/plugins/loader.js`,
+  第三方丢一个 `plugins/<x>.js` 同契约模块即得 CLI/路由/类型/MCP,零接线;参考插件 `plugins/water.js`)
+  + **跨进程 MCP 桥**(`src/plugins/mcp_bridge.js`:lifeos 当 MCP client 连外部 server,tool→Intent,
+  结果包成 `plugin_result` 实体溯源,默认 `confirm:'always'` 人工把关)。`registry.initMcpPlugins()` 在
+  web/mcp-http/mcp 三个常驻入口启动时连接。剩:网页 inbox 确认界面(P2 之后)。
 
 ## 8. 明确不做（避免竞品踩过的坑,见 docs/COMPETITIVE.md）
 

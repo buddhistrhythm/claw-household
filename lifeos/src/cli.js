@@ -59,6 +59,14 @@ async function main() {
       host: typeof flags.host === 'string' ? flags.host : undefined,
     });
   }
+  // Plugin status (in-process allowlist + MCP). Read-only; no DB needed.
+  // `--probe` also connects MCP plugins to report their tools.
+  if (cmd === 'plugins') {
+    if (flags.probe) await registry.initMcpPlugins().catch(() => {});
+    console.log(JSON.stringify(registry.pluginStatus(), null, 2));
+    if (flags.probe) await registry.closeMcpPlugins().catch(() => {});
+    return;
+  }
 
   const store = await createStore();
   const domains = registry.instantiate(store);
@@ -132,6 +140,7 @@ function printHelp() {
     '',
     '  core:      migrate | stats | search <q> [--type T] | hybrid-search <q> | semantic-search <q> | reindex',
     '             sync-obsidian | mcp | mcp-http [--port N] [--host H] | web [--port N] [--host H]',
+    '             plugins [--probe]   (allowlist plugins: config/plugins.json; see plugins/README.md)',
     '  knowledge: ingest [--source S] [--category C] [--limit N]',
     '  graph:     graph-neighbors <id> [--predicate P] | graph-expand <id> [--depth N] | graph-build',
     '  import:    import-household [--dir D] [--dry-run] | import-rsspool <file.json|.jsonl|.db>',

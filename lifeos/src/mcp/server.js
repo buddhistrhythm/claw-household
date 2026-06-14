@@ -243,6 +243,8 @@ async function buildServer(store) {
 
 async function startMcp() {
   const store = await createStore();
+  // 连接跨进程 MCP 插件（best-effort），它们的 tool 成为捕获路由的 Intent。
+  await require('../registry').initMcpPlugins().catch(() => {});
   const server = await buildServer(store);
   const transport = new StdioServerTransport();
   await server.connect(transport);
