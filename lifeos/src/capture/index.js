@@ -42,9 +42,15 @@ module.exports = function capture(store, { llm } = {}) {
   const router = buildRouter(store, intents, { llm });
   const byName = new Map(intents.map((i) => [i.name, i]));
 
-  /** 校验参数(zod) → 执行 Intent → 回连 captured_from 边。 */
+  /** 校验参数 → 执行 Intent → 回连 captured_from 边。 */
   async function runIntent(intent, args, captureEntity) {
-    const parsed = intent.schema.parse(args || {});
+    // schema 可选：内置 Intent 用 zod（.parse 校验）；插件/MCP-bridge Intent 可只带
+    // jsonSchema（由外部 tool 自行校验），此处放行原始 args。
+    // schema is optional: built-ins use zod; plugin/MCP-bridge intents may carry
+    // only a jsonSchema (validated by the external tool), so pass args through.
+    const parsed = intent.schema && typeof intent.schema.parse === 'function'
+      ? intent.schema.parse(args || {})
+      : (args || {});
     const result = await intent.run(parsed, { store, capture: captureEntity });
     if (result && result.id) {
       await relations.link(result.id, CAPTURED_FROM, captureEntity.id, {

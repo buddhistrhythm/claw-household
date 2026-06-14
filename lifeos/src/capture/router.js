@@ -100,10 +100,12 @@ module.exports = function router(store, intents, { llm } = {}) {
 
       // ── Phase 2：LLM tool-use 兜底（仅当注入了客户端） ────────────────
       if (!llm) return null;
+      // 优先用 Intent 自带的原始 jsonSchema（MCP-bridge/插件 tool 已是 JSON Schema），
+      // 否则把 zod schema 转过去。Prefer a raw jsonSchema; else convert the zod one.
       const tools = intents.map((i) => ({
         name: i.name,
         description: i.description,
-        input_schema: zodToJsonSchema(i.schema),
+        input_schema: i.jsonSchema || (i.schema ? zodToJsonSchema(i.schema) : { type: 'object', properties: {} }),
       }));
       const out = await llm.routeCapture({ capture: c, tools });
       if (!out || !out.intent || !byName.has(out.intent)) return null;
