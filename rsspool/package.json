@@ -1,0 +1,27 @@
+{
+  "name": "rsspool",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A downstream of RSSHub — pool RSS/RSSHub feeds (tech blogs, HN, X, 小红书) into Postgres/SQLite + Obsidian, serve via MCP, study via A-Tour-of-Go-style quizzes.",
+  "main": "src/cli.js",
+  "bin": {
+    "rsspool": "src/cli.js"
+  },
+  "scripts": {
+    "ingest": "node src/cli.js ingest",
+    "feeds": "node src/cli.js feeds",
+    "search": "node src/cli.js search",
+    "stats": "node src/cli.js stats",
+    "mcp": "node src/cli.js mcp",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "better-sqlite3": "^12.8.0",
+    "dotenv": "^16.4.7",
+    "zod": "^3.25.0"
+  },
+  "optionalDependencies": {
+    "pg": "^8.13.0"
+  }
+}

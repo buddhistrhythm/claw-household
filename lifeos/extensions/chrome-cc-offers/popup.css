@@ -1,0 +1,118 @@
+/* lifeos CC-offers popup — minimal, system-font, dark-mode aware. */
+:root {
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #6a6a6a;
+  --border: #d8d8d8;
+  --accent: #2962ff;
+  --accent-fg: #ffffff;
+  --warn-bg: #fff4d6;
+  --warn-fg: #6b4f00;
+  --result-bg: #f3f7ff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e;
+    --fg: #f3f3f3;
+    --muted: #9a9a9a;
+    --border: #3a3a3c;
+    --accent: #4d8bff;
+    --accent-fg: #ffffff;
+    --warn-bg: #4a3a00;
+    --warn-fg: #ffe49b;
+    --result-bg: #1f2a3d;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  width: 360px;
+}
+
+body {
+  padding: 14px 14px 10px;
+}
+
+header h1 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.muted { color: var(--muted); }
+.small { font-size: 11px; }
+.hidden { display: none !important; }
+
+#title { margin: 2px 0; font-size: 12px; word-break: break-word; }
+#url   { margin: 0 0 8px; word-break: break-all; }
+
+.label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 6px 0 4px;
+}
+
+textarea {
+  width: 100%;
+  min-height: 240px;
+  max-height: 320px;
+  padding: 8px;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  resize: vertical;
+}
+
+button.primary {
+  width: 100%;
+  margin-top: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  cursor: pointer;
+}
+button.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.warn {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  padding: 8px 10px;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.warn a { color: inherit; text-decoration: underline; }
+
+.result {
+  margin-top: 12px;
+  padding: 10px;
+  background: var(--result-bg);
+  border-radius: 6px;
+  font-size: 12px;
+}
+#result-summary { font-weight: 600; margin-bottom: 6px; }
+#result-list { margin: 4px 0 6px; padding-left: 20px; }
+#result-list li { margin: 2px 0; }
+#result-detail { white-space: pre-wrap; }
+
+footer {
+  text-align: right;
+  margin-top: 8px;
+}
+footer a { color: var(--muted); }

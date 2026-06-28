@@ -1,0 +1,141 @@
+# lifeos 运行时编排 / runtime orchestration.
+#
+# 这是「胶水层」：Postgres + 迁移 + 定时入库 + Obsidian 卷 + MCP，一条命令拉起。
+# 领域逻辑仍在 src/（容器里跑），compose 只负责把这些服务接好、可复现。
+#
+#   cp .env.example .env        # 填 LIFEOS_SECRET_KEY 等
+#   docker compose up -d db     # 起 Postgres
+#   docker compose run --rm migrate
+#   docker compose up -d ingest # 每小时抓 RSS 入库
+#   docker compose run --rm mcp # stdio MCP（供 Claude Desktop/Cursor 连接）
+#
+# 说明：MCP 是 stdio transport，由客户端按需 spawn，因此用 `run` 而非常驻 `up`。
+
+x-app: &app
+  build: .
+  image: lifeos:local
+  environment:
+    DATABASE_URL: postgres://lifeos:lifeos@db:5432/lifeos
+    LIFEOS_OBSIDIAN_VAULT: /vault
+    LIFEOS_SECRET_KEY: ${LIFEOS_SECRET_KEY:-}
+    RSSHUB_BASE: ${RSSHUB_BASE:-https://rsshub.app}
+    RSSHUB_ACCESS_KEY: ${RSSHUB_ACCESS_KEY:-}
+  volumes:
+    - vault:/vault
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  # ── 常驻：Postgres（唯一的真数据） ──────────────────────────────────
+  db:
+    image: pgvector/pgvector:pg16   # postgres:16 + pgvector（语义/混合检索需要；drop-in 替换）
+    environment:
+      POSTGRES_USER: lifeos
+      POSTGRES_PASSWORD: lifeos
+      POSTGRES_DB: lifeos
+    ports:
+      - "${LIFEOS_PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lifeos -d lifeos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── 一次性：建表 / 迁移 ────────────────────────────────────────────
+  migrate:
+    <<: *app
+    command: ["migrate"]
+    restart: "no"
+
+  # ── 常驻：每小时抓 RSS 入库（knowledge_item） ──────────────────────
+  ingest:
+    <<: *app
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do node src/cli.js ingest || true; sleep ${INGEST_INTERVAL_SECONDS:-3600}; done"]
+    restart: unless-stopped
+
+  # ── 定时：把实体镜像成 Obsidian 笔记（DB 主 → 富镜像） ─────────────
+  obsidian-sync:
+    <<: *app
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["while true; do node src/cli.js sync-obsidian || true; sleep ${OBSIDIAN_SYNC_SECONDS:-1800}; done"]
+    restart: unless-stopped
+    profiles: ["mirror"]
+
+  # ── 按需：stdio MCP（客户端按需 spawn）。用 `docker compose run --rm mcp` ──
+  mcp:
+    <<: *app
+    command: ["mcp"]
+    stdin_open: true
+    tty: false
+    profiles: ["tools"]
+
+  # ── 常驻：HTTP/SSE MCP（agentic 检索，可作为网络 service） ──────────
+  mcp-http:
+    <<: *app
+    command: ["mcp-http"]
+    environment:
+      DATABASE_URL: postgres://lifeos:lifeos@db:5432/lifeos
+      LIFEOS_OBSIDIAN_VAULT: /vault
+      LIFEOS_SECRET_KEY: ${LIFEOS_SECRET_KEY:-}
+      LIFEOS_MCP_PORT: "8848"
+      LIFEOS_MCP_HOST: "0.0.0.0"          # 容器内监听全网卡，靠下方端口发布与 token 控制暴露
+      LIFEOS_MCP_TOKEN: ${LIFEOS_MCP_TOKEN:-}  # 发布到 localhost 之外务必设置
+    ports:
+      - "127.0.0.1:${LIFEOS_MCP_PORT:-8848}:8848"  # 默认只发布到宿主 localhost
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8848/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── 常驻：PWA + JSON API（手机入口；宝宝哭推断/收件/检索） ──────────────
+  web:
+    <<: *app
+    command: ["web"]
+    environment:
+      DATABASE_URL: postgres://lifeos:lifeos@db:5432/lifeos
+      LIFEOS_OBSIDIAN_VAULT: /vault
+      LIFEOS_SECRET_KEY: ${LIFEOS_SECRET_KEY:-}
+      LIFEOS_WEB_PORT: "8850"
+      LIFEOS_WEB_HOST: "0.0.0.0"               # 容器内监听全网卡，靠端口发布 + token 控制暴露
+      LIFEOS_WEB_TOKEN: ${LIFEOS_WEB_TOKEN:-}  # 发布到 localhost 之外（含 Chrome 扩展远程）务必设置
+    ports:
+      - "127.0.0.1:${LIFEOS_WEB_PORT:-8850}:8850"  # 默认只发布到宿主 localhost；走 tailscale 才出网
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8850/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── 可选：Tailscale 边车，把 web 挂到 tailnet（手机 App 访问入口） ──────
+  # 未设 TS_AUTHKEY 时通过 profile 跳过。启用：
+  #   TS_AUTHKEY=tskey-... LIFEOS_WEB_TOKEN=... docker compose --profile tailnet up -d
+  # 然后手机在同一 tailnet 打开 https://lifeos.<tailnet>.ts.net （自动 HTTPS，不开公网端口）。
+  tailscale:
+    image: tailscale/tailscale:latest
+    hostname: ${TS_HOSTNAME:-lifeos}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-lifeos}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_SERVE_CONFIG: /config/serve.json     # 把 tailnet:443 反代到 compose 内 web:8850
+    volumes:
+      - ts_state:/var/lib/tailscale
+      - ./config/tailscale-serve.json:/config/serve.json:ro
+    cap_add: [NET_ADMIN, SYS_MODULE]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    depends_on: [web]
+    restart: unless-stopped
+    profiles: ["tailnet"]
+
+volumes:
+  pgdata:
+  vault:
+  ts_state:
